@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#f5f5f5">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Header Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="24dp">
+        
+        <ImageView
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:src="@android:drawable/ic_menu_rotate"
+            android:tint="#4CAF50"
+            android:layout_marginEnd="16dp" />
+            
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MyBike Security"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="#333333" />
+                
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Motion Detection &amp; SMS Control"
+                android:textSize="14sp"
+                android:textColor="#666666" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Motion Status -->
+    <TextView
+        android:id="@+id/motionStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="✓ Initializing..."
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textAlignment="center"
+        android:padding="16dp"
+        android:background="#e8f5e8"
+        android:textColor="#4CAF50"
+        android:layout_marginBottom="24dp" />
+
+    <!-- App States Section -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Current States"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#ffffff"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp"
+        android:elevation="2dp">
+        
+        <TextView
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:text="Status:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+            
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="locked"
+            android:textSize="16sp"
+            android:textColor="#FF5722" />
+    </LinearLayout>
+
+    <!-- Admin Number -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#ffffff"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp"
+        android:elevation="2dp">
+        
+        <TextView
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:text="Admin:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+            
+        <TextView
+            android:id="@+id/adminNumberText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="01743395086"
+            android:textSize="16sp"
+            android:textColor="#2196F3" />
+    </LinearLayout>
+
+    <!-- Call Status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#ffffff"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp"
+        android:elevation="2dp">
+        
+        <TextView
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:text="Call:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+            
+        <TextView
+            android:id="@+id/callText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="true"
+            android:textSize="16sp"
+            android:textColor="#4CAF50" />
+    </LinearLayout>
+
+    <!-- Alarm Status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#ffffff"
+        android:padding="12dp"
+        android:layout_marginBottom="24dp"
+        android:elevation="2dp">
+        
+        <TextView
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:text="Alarm:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+            
+        <TextView
+            android:id="@+id/alarmText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="true"
+            android:textSize="16sp"
+            android:textColor="#4CAF50" />
+    </LinearLayout>
+
+    <!-- SMS Commands Section -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="SMS Commands"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Send these exact commands from any phone number:\n\n• lock - Lock the device\n• unlock - Unlock the device\n• call true/false - Enable/disable calls\n• alerm true/false - Enable/disable alarm\n• setadminnumber ************ - Change admin number\n\nApp will reply confirming changes."
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:lineSpacingMultiplier="1.4"
+        android:background="#ffffff"
+        android:padding="16dp"
+        android:elevation="1dp"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Features Section -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Features"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="• 24/7 motion detection using gyroscope\n• SMS command control from any phone number\n• Automatic SMS replies for valid commands\n• Persistent notification with status\n• Secure state management"
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:lineSpacingMultiplier="1.4"
+        android:background="#ffffff"
+        android:padding="16dp"
+        android:elevation="1dp" />
+
+</LinearLayout>
+</ScrollView>
