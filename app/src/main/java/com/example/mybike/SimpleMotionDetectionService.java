@@ -41,7 +41,6 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private Handler beepHandler;
     private Runnable beepRunnable;
     private boolean isBeeping = false;
-    private long lastCallTime = 0;
     
     private static final float MOTION_THRESHOLD = 0.3f;
     private static final long MOTION_ALERT_COOLDOWN = 30000; // 30 seconds between motion alerts
@@ -247,23 +246,30 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 return;
             }
             
-            // Check cooldown period
+            // Check cooldown period using stored time from state manager
             long currentTime = System.currentTimeMillis();
-            if (currentTime - lastCallTime < CALL_COOLDOWN) {
+            long storedLastCallTime = stateManager.getLastCallTime();
+            if (currentTime - storedLastCallTime < CALL_COOLDOWN) {
                 Log.d(TAG, "Phone call skipped - cooldown period");
                 return;
             }
             
             String adminNumber = stateManager.getAdminNumber();
             if (adminNumber != null && !adminNumber.isEmpty()) {
-                Intent callIntent = new Intent(Intent.ACTION_CALL);
-                callIntent.setData(Uri.parse("tel:" + adminNumber));
-                callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                Log.d(TAG, "Attempting to call admin number: " + adminNumber);
                 
-                startActivity(callIntent);
-                lastCallTime = currentTime;
-                
-                Log.d(TAG, "Phone call initiated to: " + adminNumber);
+                try {
+                    Intent callIntent = new Intent(Intent.ACTION_CALL);
+                    callIntent.setData(Uri.parse("tel:" + adminNumber));
+                    callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    
+                    startActivity(callIntent);
+                    stateManager.setLastCallTime(currentTime);
+                    
+                    Log.d(TAG, "Phone call initiated successfully to: " + adminNumber);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error starting phone call to " + adminNumber, e);
+                }
             } else {
                 Log.e(TAG, "No admin number set for phone calls");
             }

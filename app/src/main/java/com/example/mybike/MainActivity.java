@@ -9,12 +9,16 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1002;
@@ -26,10 +30,16 @@ public class MainActivity extends Activity {
     private TextView adminNumberText;
     private TextView callText;
     private TextView alarmText;
+    private TextView lastCallTimeText;
+    private TextView nextCallTimerText;
     
     private BroadcastReceiver motionReceiver;
     private BroadcastReceiver stateReceiver;
     private AppStateManager stateManager;
+    
+    private Handler timerHandler;
+    private Runnable timerRunnable;
+    private static final long CALL_COOLDOWN = 60000;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,6 +56,8 @@ public class MainActivity extends Activity {
             adminNumberText = findViewById(R.id.adminNumberText);
             callText = findViewById(R.id.callText);
             alarmText = findViewById(R.id.alarmText);
+            lastCallTimeText = findViewById(R.id.lastCallTimeText);
+            nextCallTimerText = findViewById(R.id.nextCallTimerText);
             
             if (motionStatusText == null) {
                 android.util.Log.e("MainActivity", "Failed to find required views");
@@ -58,6 +70,7 @@ public class MainActivity extends Activity {
             setupReceivers();
             requestPermissions();
             updateStateDisplay();
+            setupTimer();
             
             // Delay service start to ensure everything is initialized
             motionStatusText.postDelayed(new Runnable() {
@@ -210,10 +223,60 @@ public class MainActivity extends Activity {
                         getResources().getColor(android.R.color.holo_red_dark));
                 }
                 
+                updateCallTimeDisplay();
+                
                 android.util.Log.d("MainActivity", "State display updated: " + stateManager.getAllStatesString());
             }
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error updating state display", e);
+        }
+    }
+    
+    private void updateCallTimeDisplay() {
+        try {
+            if (stateManager != null && lastCallTimeText != null && nextCallTimerText != null) {
+                long lastCallTime = stateManager.getLastCallTime();
+                
+                if (lastCallTime == 0) {
+                    lastCallTimeText.setText("Never");
+                    nextCallTimerText.setText("Ready");
+                    nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
+                } else {
+                    SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+                    lastCallTimeText.setText(sdf.format(new Date(lastCallTime)));
+                    
+                    long currentTime = System.currentTimeMillis();
+                    long timeSinceLastCall = currentTime - lastCallTime;
+                    
+                    if (timeSinceLastCall >= CALL_COOLDOWN) {
+                        nextCallTimerText.setText("Ready");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
+                    } else {
+                        long remainingTime = CALL_COOLDOWN - timeSinceLastCall;
+                        long seconds = remainingTime / 1000;
+                        nextCallTimerText.setText(seconds + "s");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error updating call time display", e);
+        }
+    }
+    
+    private void setupTimer() {
+        try {
+            timerHandler = new Handler();
+            timerRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    updateCallTimeDisplay();
+                    timerHandler.postDelayed(this, 1000); // Update every second
+                }
+            };
+            timerHandler.post(timerRunnable);
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error setting up timer", e);
         }
     }
     
@@ -274,6 +337,18 @@ public class MainActivity extends Activity {
             
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error unregistering receivers", e);
+        }
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        try {
+            if (timerHandler != null && timerRunnable != null) {
+                timerHandler.removeCallbacks(timerRunnable);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error cleaning up timer", e);
         }
     }
 }

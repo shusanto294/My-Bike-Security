@@ -12,6 +12,7 @@ public class AppStateManager {
     private static final String KEY_ADMIN_NUMBER = "admin_number";
     private static final String KEY_CALL = "call";
     private static final String KEY_ALARM = "alarm";
+    private static final String KEY_LAST_CALL_TIME = "last_call_time";
     
     private static AppStateManager instance;
     private SharedPreferences prefs;
@@ -33,7 +34,7 @@ public class AppStateManager {
             setStatus("locked");
         }
         if (!prefs.contains(KEY_ADMIN_NUMBER)) {
-            setAdminNumber("01743395086");
+            setAdminNumber("+11111111111");
         }
         if (!prefs.contains(KEY_CALL)) {
             setCall(true);
@@ -54,7 +55,7 @@ public class AppStateManager {
     }
     
     public String getAdminNumber() {
-        return prefs.getString(KEY_ADMIN_NUMBER, "01743395086");
+        return prefs.getString(KEY_ADMIN_NUMBER, "+11111111111");
     }
     
     public void setAdminNumber(String number) {
@@ -82,6 +83,15 @@ public class AppStateManager {
     
     public boolean isLocked() {
         return "locked".equals(getStatus());
+    }
+    
+    public long getLastCallTime() {
+        return prefs.getLong(KEY_LAST_CALL_TIME, 0);
+    }
+    
+    public void setLastCallTime(long time) {
+        prefs.edit().putLong(KEY_LAST_CALL_TIME, time).apply();
+        Log.d(TAG, "Last call time updated: " + time);
     }
     
     public String getAllStatesString() {

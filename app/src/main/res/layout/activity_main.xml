@@ -123,7 +123,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="01743395086"
+            android:text="11111111111"
             android:textSize="16sp"
             android:textColor="#2196F3" />
     </LinearLayout>
@@ -163,7 +163,7 @@
         android:orientation="horizontal"
         android:background="#ffffff"
         android:padding="12dp"
-        android:layout_marginBottom="24dp"
+        android:layout_marginBottom="8dp"
         android:elevation="2dp">
         
         <TextView
@@ -180,6 +180,62 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="true"
+            android:textSize="16sp"
+            android:textColor="#4CAF50" />
+    </LinearLayout>
+
+    <!-- Last Call Time -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#ffffff"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp"
+        android:elevation="2dp">
+        
+        <TextView
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:text="Last Call:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+            
+        <TextView
+            android:id="@+id/lastCallTimeText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Never"
+            android:textSize="16sp"
+            android:textColor="#666666" />
+    </LinearLayout>
+
+    <!-- Next Call Timer -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#ffffff"
+        android:padding="12dp"
+        android:layout_marginBottom="24dp"
+        android:elevation="2dp">
+        
+        <TextView
+            android:layout_width="100dp"
+            android:layout_height="wrap_content"
+            android:text="Next Call:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+            
+        <TextView
+            android:id="@+id/nextCallTimerText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Ready"
             android:textSize="16sp"
             android:textColor="#4CAF50" />
     </LinearLayout>
