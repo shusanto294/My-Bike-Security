@@ -50,11 +50,12 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private Handler beepHandler;
     private Runnable beepRunnable;
     private boolean isBeeping = false;
+    private boolean isCurrentlyPlayingBeep = false;
     
     private static final float MOTION_THRESHOLD = 0.3f;
     private static final long MOTION_ALERT_COOLDOWN = 30000; // 30 seconds between motion alerts
     private static final long CALL_COOLDOWN = 60000; // 60 seconds between calls
-    private static final int BEEP_INTERVAL = 1000; // 1 second between beeps
+    private static final int BEEP_INTERVAL = 800; // 800ms between beep starts (500ms beep + 300ms silence)
     private static final long SENSOR_REREGISTER_INTERVAL = 30000; // Re-register sensor every 30 seconds
     private static final long CALL_DELAY = 30000; // 30 seconds delay before calling
     
@@ -68,6 +69,10 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private Runnable uiUpdateRunnable;
     private boolean isCallDelayActive = false;
     private long motionStartTime = 0;
+    
+    // Call scheduling
+    private Handler callSchedulerHandler;
+    private Runnable scheduledCallRunnable;
     
     @Override
     public void onCreate() {
@@ -136,18 +141,31 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         String text;
         
         if (motionDetected) {
-            if (isCallDelayActive) {
+            if (isCallDelayActive && motionStartTime > 0) {
                 long timeRemaining = CALL_DELAY - (System.currentTimeMillis() - motionStartTime);
                 if (timeRemaining > 0) {
-                    text = "🚨 Motion! Calling in " + (timeRemaining / 1000) + "s (" + status + ")";
+                    text = "🚨 Motion! Calling in " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
                 } else {
-                    text = "🚨 Motion Detected! (" + status + ")";
+                    text = "🚨 Calling now! (" + status + ")";
                 }
             } else {
                 text = "🚨 Motion Detected! (" + status + ")";
             }
         } else {
-            text = "✓ Monitoring (" + status + ")";
+            // No current motion detected
+            if (isCallDelayActive && motionStartTime > 0) {
+                long timeRemaining = CALL_DELAY - (System.currentTimeMillis() - motionStartTime);
+                if (timeRemaining > 0) {
+                    text = "⏱️ Calling in " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
+                } else {
+                    text = "📞 Ready to call (" + status + ")";
+                }
+            } else if (stateManager != null && stateManager.isCallReady()) {
+                // In Ready state - waiting for motion to trigger call
+                text = "🟡 READY - Motion will trigger call (" + status + ")";
+            } else {
+                text = "✓ Monitoring (" + status + ")";
+            }
         }
         
         return new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -372,11 +390,84 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 // Start UI updates and initial notification
                 startUIUpdates();
                 updateNotificationAndUI();
+                
+                // Schedule the actual call after 30 seconds - THIS IS THE KEY FIX
+                scheduleDelayedCall();
             } else {
                 Log.d(TAG, "📞 MOTION CONTINUES - Timer already running");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error starting call timer", e);
+        }
+    }
+    
+    private void scheduleDelayedCall() {
+        try {
+            Log.w(TAG, "📞 SCHEDULING DELAYED CALL - Will execute in 30 seconds");
+            
+            // Cancel any existing scheduled call first
+            cancelScheduledCall();
+            
+            callSchedulerHandler = new Handler(Looper.getMainLooper());
+            scheduledCallRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Log.w(TAG, "📞 DELAYED CALL TIMER EXPIRED - Checking conditions");
+                        
+                        // Check if we should still make the call
+                        if (stateManager != null && isCallDelayActive && motionStartTime > 0) {
+                            long currentTime = System.currentTimeMillis();
+                            long elapsed = currentTime - motionStartTime;
+                            
+                            Log.w(TAG, "📞 TIMER CHECK: elapsed=" + elapsed + "ms, threshold=30000ms");
+                            
+                            if (elapsed >= CALL_DELAY) {
+                                Log.w(TAG, "✅ TIMER EXPIRED - Setting to READY state, waiting for motion");
+                                
+                                // Update state to Ready (don't call immediately)
+                                stateManager.setCallDelayActive(false);
+                                stateManager.setCallReady(true);
+                                
+                                // Reset local timer states 
+                                isCallDelayActive = false;
+                                motionStartTime = 0;
+                                stateManager.setMotionStartTime(0);
+                                
+                                // Stop beeping when timer expires
+                                stopBeeping();
+                                
+                                // Update UI to show "Ready" state
+                                updateNotificationAndUI();
+                                
+                                Log.w(TAG, "🟡 Service in READY state - stopped beeping, waiting for motion to trigger call");
+                            } else {
+                                Log.w(TAG, "⏰ Timer not yet expired, waiting...");
+                            }
+                        } else {
+                            Log.w(TAG, "❌ Call cancelled or timer reset");
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in delayed call execution", e);
+                    }
+                }
+            };
+            
+            callSchedulerHandler.postDelayed(scheduledCallRunnable, CALL_DELAY); // 30 seconds
+            Log.w(TAG, "✅ Delayed call scheduled successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling delayed call", e);
+        }
+    }
+    
+    private void cancelScheduledCall() {
+        try {
+            if (callSchedulerHandler != null && scheduledCallRunnable != null) {
+                callSchedulerHandler.removeCallbacks(scheduledCallRunnable);
+                Log.w(TAG, "📞 Scheduled call cancelled");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error cancelling scheduled call", e);
         }
     }
     
@@ -427,6 +518,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             if (isCallDelayActive) {
                 isCallDelayActive = false;
                 
+                // Cancel any scheduled call
+                cancelScheduledCall();
+                
                 // Update state manager - clear timer state
                 if (stateManager != null) {
                     stateManager.setCallDelayActive(false);
@@ -473,16 +567,37 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             beepRunnable = new Runnable() {
                 @Override
                 public void run() {
-                    if (isBeeping && stateManager != null && stateManager.isLocked()) {
-                        try {
-                            toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500);
-                            Log.d(TAG, "Beep played");
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error playing beep", e);
+                    if (isBeeping && stateManager != null && stateManager.getAlarm()) {
+                        // Check if previous beep is still playing
+                        if (!isCurrentlyPlayingBeep) {
+                            try {
+                                isCurrentlyPlayingBeep = true;
+                                toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500);
+                                Log.d(TAG, "🔊 Beep started (500ms duration)");
+                                
+                                // Schedule completion of this beep
+                                beepHandler.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        isCurrentlyPlayingBeep = false;
+                                        Log.d(TAG, "🔊 Beep completed");
+                                    }
+                                }, 500); // Match the beep duration
+                                
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error playing beep", e);
+                                isCurrentlyPlayingBeep = false;
+                            }
+                        } else {
+                            Log.d(TAG, "🔊 Skipping beep - previous beep still playing");
                         }
                         
-                        // Schedule next beep
+                        // Schedule next beep attempt
                         beepHandler.postDelayed(this, BEEP_INTERVAL);
+                    } else {
+                        Log.d(TAG, "🔇 Beeping stopped - isBeeping:" + isBeeping + ", alarm:" + 
+                             (stateManager != null ? stateManager.getAlarm() : "null"));
+                        isCurrentlyPlayingBeep = false; // Reset state when stopping
                     }
                 }
             };
@@ -524,19 +639,39 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                     LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
                     
                     if (detected) {
-                        // Motion detected - start alarm actions
-                        Log.w(TAG, "🚨 MOTION DETECTED! Starting alarm actions...");
-                        Log.w(TAG, "🚨 Step 1: WAKING UP SCREEN immediately");
-                        wakeUpScreen();
-                        Log.w(TAG, "🚨 Step 2: Sending SMS alert");
-                        sendMotionAlert();
-                        Log.w(TAG, "🚨 Step 3: Starting beeping");
-                        startBeeping();
-                        Log.w(TAG, "🚨 Step 4: Starting 30-second call timer");
-                        startCallTimer();
-                        Log.w(TAG, "🚨 All alarm actions initiated with screen awake");
+                        // Motion detected - check if we should call immediately or start timer
+                        Log.w(TAG, "🚨 MOTION DETECTED! Checking call state...");
+                        
+                        // Check if we're in Ready state (timer expired, waiting for motion)
+                        boolean isReady = (stateManager != null) ? stateManager.isCallReady() : false;
+                        boolean isTimerActive = (stateManager != null) ? stateManager.isCallDelayActive() : false;
+                        
+                        Log.w(TAG, "🚨 Call state check: Ready=" + isReady + ", TimerActive=" + isTimerActive);
+                        
+                        if (isReady && !isTimerActive) {
+                            // We're in Ready state - trigger call immediately
+                            Log.w(TAG, "🚨 READY STATE + MOTION = CALLING IMMEDIATELY!");
+                            wakeUpScreen();
+                            makePhoneCall();
+                        } else if (!isTimerActive) {
+                            // First motion detection - start the alarm sequence
+                            Log.w(TAG, "🚨 Starting new alarm sequence...");
+                            Log.w(TAG, "🚨 Step 1: WAKING UP SCREEN immediately");
+                            wakeUpScreen();
+                            Log.w(TAG, "🚨 Step 2: Sending SMS alert");
+                            sendMotionAlert();
+                            Log.w(TAG, "🚨 Step 3: Starting beeping");
+                            startBeeping();
+                            Log.w(TAG, "🚨 Step 4: Starting 30-second call timer");
+                            startCallTimer();
+                            Log.w(TAG, "🚨 All alarm actions initiated with screen awake");
+                        } else {
+                            // Timer already active - restart beeping if motion detected again
+                            Log.w(TAG, "🚨 Motion detected during active timer - restarting beeping");
+                            startBeeping();
+                        }
                     } else {
-                        // Motion stopped - stop alarm actions but KEEP the call timer running
+                        // Motion stopped - stop beeping but KEEP the call timer running
                         Log.d(TAG, "Motion stopped - stopping beeping but keeping call timer");
                         stopBeeping();
                         // DON'T cancel the delayed call - let it complete
@@ -559,16 +694,18 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         try {
             if (stateManager == null) return;
             
-            // Only beep if device is locked and alarm is enabled
-            if (!stateManager.isLocked() || !stateManager.getAlarm()) {
-                Log.d(TAG, "Beeping skipped - device unlocked or alarm disabled");
+            // Beep if alarm is enabled (remove locked requirement for better reliability)
+            if (!stateManager.getAlarm()) {
+                Log.d(TAG, "Beeping skipped - alarm disabled");
                 return;
             }
             
             if (!isBeeping) {
                 isBeeping = true;
                 beepHandler.post(beepRunnable);
-                Log.d(TAG, "Started continuous beeping");
+                Log.w(TAG, "🔊 Started continuous beeping - will beep while motion detected");
+            } else {
+                Log.d(TAG, "🔊 Beeping already active");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error starting beeping", e);
@@ -579,8 +716,15 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         try {
             if (isBeeping) {
                 isBeeping = false;
+                isCurrentlyPlayingBeep = false; // Reset playing state
                 beepHandler.removeCallbacks(beepRunnable);
-                Log.d(TAG, "Stopped beeping");
+                
+                // Also stop any current tone that might be playing
+                if (toneGenerator != null) {
+                    toneGenerator.stopTone();
+                }
+                
+                Log.d(TAG, "🔇 Stopped beeping and reset all beep states");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error stopping beeping", e);
@@ -671,7 +815,11 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                         
                         // Clear call ready state and set to never after calling
                         stateManager.setCallReady(false);
-                        Log.w(TAG, "✅ Phone call initiated successfully to: " + adminNumber + " - Timer set to Never");
+                        
+                        // Stop beeping after successful call
+                        stopBeeping();
+                        
+                        Log.w(TAG, "✅ Phone call initiated successfully to: " + adminNumber + " - Stopped beeping, Timer set to Never");
                         
                         // Update UI to show "Never" after call
                         updateNotificationAndUI();
@@ -754,13 +902,19 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             
             // Stop call timer and UI updates
             cancelCallTimer();
+            cancelScheduledCall();
             stopUIUpdates();
             
             // Release tone generator
             if (toneGenerator != null) {
+                toneGenerator.stopTone(); // Stop any playing tone
                 toneGenerator.release();
                 toneGenerator = null;
             }
+            
+            // Reset beep states
+            isBeeping = false;
+            isCurrentlyPlayingBeep = false;
             
             // Release wake locks
             releaseWakeLock();

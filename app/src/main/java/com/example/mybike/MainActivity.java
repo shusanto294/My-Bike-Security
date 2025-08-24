@@ -156,11 +156,8 @@ public class MainActivity extends Activity {
                 wakeUpScreen();
             }
             
-            // Check if we should trigger a call now (timer ready + motion detected)
-            if (motionDetected && stateManager != null && stateManager.isCallReady() && !stateManager.isCallDelayActive()) {
-                android.util.Log.w("MainActivity", "🚨 MOTION DETECTED while call was ready - Triggering phone call");
-                triggerPhoneCall();
-            }
+            // Note: Service now handles all call triggering logic
+            // MainActivity just displays the UI status
             
             if (motionStatusText != null) {
                 if (motionDetected) {
@@ -332,9 +329,15 @@ public class MainActivity extends Activity {
                 
                 if (isCallReady) {
                     // Show "Ready" when timer reached 30s but call hasn't been made yet
-                    nextCallTimerText.setText("Ready");
-                    nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
-                    android.util.Log.d("MainActivity", "Showing Ready - call about to be made");
+                    if (isCurrentlyMotionDetected) {
+                        nextCallTimerText.setText("Ready + Motion = CALLING!");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                        android.util.Log.d("MainActivity", "Showing Ready + Motion = CALLING!");
+                    } else {
+                        nextCallTimerText.setText("Ready (motion will call)");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
+                        android.util.Log.d("MainActivity", "Showing Ready - waiting for motion");
+                    }
                 } else if (isDelayActive && motionStartTime > 0) {
                     // Show countdown for motion delay (30 seconds)
                     long currentTime = System.currentTimeMillis();
@@ -355,28 +358,10 @@ public class MainActivity extends Activity {
                         nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
                         android.util.Log.d("MainActivity", "Showing final countdown: 1s");
                     } else {
-                        // Timer expired - CHECK BOTH CONDITIONS before calling
-                        if (!stateManager.isCallReady()) {
-                            if (isCurrentlyMotionDetected) {
-                                // BOTH conditions met: timer expired AND motion detected
-                                android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED + MOTION DETECTED - Triggering phone call");
-                                triggerPhoneCall();
-                            } else {
-                                // Timer expired but no current motion - wait for motion
-                                android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED but no current motion - waiting for motion to call");
-                                nextCallTimerText.setText("Ready (waiting for motion)");
-                                nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
-                            }
-                        } else {
-                            // Call already ready, show current motion status
-                            if (isCurrentlyMotionDetected) {
-                                nextCallTimerText.setText("Ready + Motion = CALLING!");
-                                nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
-                            } else {
-                                nextCallTimerText.setText("Ready (waiting for motion)");
-                                nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
-                            }
-                        }
+                        // Timer expired - Service sets to Ready state
+                        nextCallTimerText.setText("Ready (waiting for motion)");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
+                        android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED - Service should set to Ready state");
                     }
                 } else {
                     // No motion detected or delay not active
