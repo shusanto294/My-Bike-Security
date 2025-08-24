@@ -14,6 +14,7 @@ import android.hardware.SensorManager;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
+import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -45,8 +46,8 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private PowerManager powerManager;
     private KeyguardManager keyguardManager;
     
-    // Beep and call functionality
-    private ToneGenerator toneGenerator;
+    // Audio and call functionality
+    private MediaPlayer mediaPlayer;
     private Handler beepHandler;
     private Runnable beepRunnable;
     private boolean isBeeping = false;
@@ -559,8 +560,16 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     
     private void initBeepSystem() {
         try {
-            // Initialize tone generator for beep sounds
-            toneGenerator = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
+            // Initialize MediaPlayer for police sound
+            mediaPlayer = new MediaPlayer();
+            android.content.res.AssetFileDescriptor afd = getAssets().openFd("police.mp3");
+            mediaPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            afd.close();
+            
+            mediaPlayer.setAudioStreamType(AudioManager.STREAM_ALARM);
+            mediaPlayer.setLooping(false); // Don't loop the audio file itself
+            mediaPlayer.prepare();
+            
             beepHandler = new Handler(Looper.getMainLooper());
             
             // Create beep runnable
@@ -569,45 +578,52 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 public void run() {
                     if (isBeeping && stateManager != null && stateManager.getAlarm()) {
                         try {
-                            // Play ONE beep
+                            // Play police sound
                             isCurrentlyPlayingBeep = true;
-                            toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500);
-                            Log.d(TAG, "🔊 Beep started - will schedule next after this completes");
                             
-                            // Schedule the NEXT beep only after this one finishes (500ms + small gap)
-                            beepHandler.postDelayed(new Runnable() {
-                                @Override
-                                public void run() {
-                                    isCurrentlyPlayingBeep = false;
-                                    Log.d(TAG, "🔊 Beep completed");
-                                    
-                                    // Only schedule next beep if still beeping
-                                    if (isBeeping && stateManager != null && stateManager.getAlarm()) {
-                                        Log.d(TAG, "🔊 Scheduling next beep");
-                                        beepHandler.postDelayed(beepRunnable, 300); // 300ms silence gap
-                                    } else {
-                                        Log.d(TAG, "🔇 Beeping cycle ended");
+                            if (mediaPlayer != null) {
+                                mediaPlayer.seekTo(0); // Reset to beginning
+                                mediaPlayer.start();
+                                
+                                // Get the duration of the audio file
+                                int duration = mediaPlayer.getDuration();
+                                Log.d(TAG, "🚨 Police sound started - duration: " + duration + "ms");
+                                
+                                // Schedule the NEXT sound only after this one finishes
+                                beepHandler.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        isCurrentlyPlayingBeep = false;
+                                        Log.d(TAG, "🚨 Police sound completed");
+                                        
+                                        // Only schedule next sound if still beeping
+                                        if (isBeeping && stateManager != null && stateManager.getAlarm()) {
+                                            Log.d(TAG, "🚨 Scheduling next police sound");
+                                            beepHandler.postDelayed(beepRunnable, 500); // 500ms gap between sounds
+                                        } else {
+                                            Log.d(TAG, "🔇 Police sound cycle ended");
+                                        }
                                     }
-                                }
-                            }, 500); // Wait exactly 500ms for current beep to finish
+                                }, duration); // Wait for the full audio duration
+                            }
                             
                         } catch (Exception e) {
-                            Log.e(TAG, "Error playing beep", e);
+                            Log.e(TAG, "Error playing police sound", e);
                             isCurrentlyPlayingBeep = false;
                             // Try again after a delay if still beeping
                             if (isBeeping) {
-                                beepHandler.postDelayed(this, 1000);
+                                beepHandler.postDelayed(this, 2000);
                             }
                         }
                     } else {
-                        Log.d(TAG, "🔇 Beeping stopped - isBeeping:" + isBeeping + ", alarm:" + 
+                        Log.d(TAG, "🔇 Police sound stopped - isBeeping:" + isBeeping + ", alarm:" + 
                              (stateManager != null ? stateManager.getAlarm() : "null"));
                         isCurrentlyPlayingBeep = false;
                     }
                 }
             };
             
-            Log.d(TAG, "Beep system initialized");
+            Log.d(TAG, "Police sound system initialized");
         } catch (Exception e) {
             Log.e(TAG, "Error initializing beep system", e);
         }
@@ -709,7 +725,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 isBeeping = true;
                 isCurrentlyPlayingBeep = false; // Ensure clean start
                 beepHandler.post(beepRunnable);
-                Log.w(TAG, "🔊 Started sequential beeping - one beep at a time");
+                Log.w(TAG, "🚨 Started police sound - one sound at a time");
             } else {
                 Log.d(TAG, "🔊 Beeping already active or playing - isBeeping:" + isBeeping + ", playing:" + isCurrentlyPlayingBeep);
             }
@@ -728,12 +744,13 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 beepHandler.removeCallbacks(beepRunnable);
                 beepHandler.removeCallbacksAndMessages(null); // Remove any nested callbacks too
                 
-                // Stop any currently playing tone immediately
-                if (toneGenerator != null) {
-                    toneGenerator.stopTone();
+                // Stop any currently playing audio immediately
+                if (mediaPlayer != null && mediaPlayer.isPlaying()) {
+                    mediaPlayer.pause();
+                    mediaPlayer.seekTo(0); // Reset to beginning for next time
                 }
                 
-                Log.d(TAG, "🔇 Stopped beeping - removed all callbacks and stopped current tone");
+                Log.d(TAG, "🔇 Stopped police sound - removed all callbacks and stopped current audio");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error stopping beeping", e);
@@ -914,11 +931,13 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             cancelScheduledCall();
             stopUIUpdates();
             
-            // Release tone generator
-            if (toneGenerator != null) {
-                toneGenerator.stopTone(); // Stop any playing tone
-                toneGenerator.release();
-                toneGenerator = null;
+            // Release media player
+            if (mediaPlayer != null) {
+                if (mediaPlayer.isPlaying()) {
+                    mediaPlayer.stop();
+                }
+                mediaPlayer.release();
+                mediaPlayer = null;
             }
             
             // Reset beep states
