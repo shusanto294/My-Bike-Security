@@ -19,6 +19,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.app.KeyguardManager;
+import android.view.WindowManager;
 import android.telephony.SmsManager;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
@@ -36,6 +39,12 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private boolean motionDetected = false;
     private long lastMotionAlertTime = 0;
     
+    // Power management
+    private PowerManager.WakeLock wakeLock;
+    private PowerManager.WakeLock screenWakeLock;
+    private PowerManager powerManager;
+    private KeyguardManager keyguardManager;
+    
     // Beep and call functionality
     private ToneGenerator toneGenerator;
     private Handler beepHandler;
@@ -46,6 +55,12 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private static final long MOTION_ALERT_COOLDOWN = 30000; // 30 seconds between motion alerts
     private static final long CALL_COOLDOWN = 60000; // 60 seconds between calls
     private static final int BEEP_INTERVAL = 1000; // 1 second between beeps
+    private static final long SENSOR_REREGISTER_INTERVAL = 30000; // Re-register sensor every 30 seconds
+    
+    // Sensor health monitoring
+    private long lastSensorEventTime = 0;
+    private Handler sensorHealthHandler;
+    private Runnable sensorHealthRunnable;
     
     @Override
     public void onCreate() {
@@ -55,8 +70,10 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         stateManager = AppStateManager.getInstance(this);
         createNotificationChannel();
+        initPowerManager();
         initSensor();
         initBeepSystem();
+        setupSensorHealthMonitoring();
     }
     
     @Override
@@ -65,6 +82,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         
         try {
             startForeground(NOTIFICATION_ID, createNotification());
+            acquireWakeLock();
             Log.d(TAG, "Foreground service started");
         } catch (Exception e) {
             Log.e(TAG, "Error starting foreground", e);
@@ -110,20 +128,171 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 .build();
     }
     
+    private void initPowerManager() {
+        try {
+            powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+            if (powerManager != null) {
+                Log.d(TAG, "Power manager initialized");
+            }
+            if (keyguardManager != null) {
+                Log.d(TAG, "Keyguard manager initialized");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing power manager", e);
+        }
+    }
+    
+    private void acquireWakeLock() {
+        try {
+            if (powerManager != null && (wakeLock == null || !wakeLock.isHeld())) {
+                wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    "MyBike::MotionDetectionWakeLock"
+                );
+                wakeLock.acquire();
+                Log.d(TAG, "WakeLock acquired for motion detection");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error acquiring wake lock", e);
+        }
+    }
+    
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                wakeLock = null;
+                Log.d(TAG, "WakeLock released");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing wake lock", e);
+        }
+    }
+    
+    private void wakeUpScreen() {
+        try {
+            if (powerManager != null) {
+                // Create a screen wake lock to turn on the screen
+                if (screenWakeLock == null || !screenWakeLock.isHeld()) {
+                    screenWakeLock = powerManager.newWakeLock(
+                        PowerManager.SCREEN_BRIGHT_WAKE_LOCK | 
+                        PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                        "MyBike::ScreenWakeLock"
+                    );
+                    screenWakeLock.acquire(10000); // Keep screen on for 10 seconds
+                    Log.d(TAG, "Screen wake lock acquired");
+                }
+                
+                // Also try to dismiss keyguard if possible
+                if (keyguardManager != null && keyguardManager.isKeyguardLocked()) {
+                    Log.d(TAG, "Keyguard is locked, attempting to wake up screen");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error waking up screen", e);
+        }
+    }
+    
+    private void releaseScreenWakeLock() {
+        try {
+            if (screenWakeLock != null && screenWakeLock.isHeld()) {
+                screenWakeLock.release();
+                screenWakeLock = null;
+                Log.d(TAG, "Screen wake lock released");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing screen wake lock", e);
+        }
+    }
+    
     private void initSensor() {
         try {
             sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
             if (sensorManager != null) {
                 gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
                 if (gyroscope != null) {
-                    sensorManager.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_NORMAL);
-                    Log.d(TAG, "Gyroscope registered");
+                    // Use SENSOR_DELAY_GAME for better responsiveness during deep sleep
+                    boolean registered = sensorManager.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
+                    if (registered) {
+                        Log.d(TAG, "Gyroscope registered successfully with GAME delay");
+                    } else {
+                        Log.e(TAG, "Failed to register gyroscope");
+                    }
                 } else {
-                    Log.e(TAG, "No gyroscope sensor");
+                    Log.e(TAG, "No gyroscope sensor available");
                 }
             }
         } catch (Exception e) {
             Log.e(TAG, "Error init sensor", e);
+        }
+    }
+    
+    private void setupSensorHealthMonitoring() {
+        try {
+            sensorHealthHandler = new Handler(Looper.getMainLooper());
+            sensorHealthRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    checkSensorHealth();
+                    // Schedule next health check
+                    sensorHealthHandler.postDelayed(this, SENSOR_REREGISTER_INTERVAL);
+                }
+            };
+            
+            // Start health monitoring
+            sensorHealthHandler.postDelayed(sensorHealthRunnable, SENSOR_REREGISTER_INTERVAL);
+            Log.d(TAG, "Sensor health monitoring started");
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting up sensor health monitoring", e);
+        }
+    }
+    
+    private void checkSensorHealth() {
+        try {
+            long currentTime = System.currentTimeMillis();
+            long timeSinceLastEvent = currentTime - lastSensorEventTime;
+            
+            // If no sensor events for too long, try to re-register
+            if (lastSensorEventTime > 0 && timeSinceLastEvent > SENSOR_REREGISTER_INTERVAL) {
+                Log.w(TAG, "No sensor events for " + timeSinceLastEvent + "ms, re-registering sensor");
+                reregisterSensor();
+            }
+            
+            // Update notification with health status
+            if (notificationManager != null) {
+                notificationManager.notify(NOTIFICATION_ID, createNotification());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking sensor health", e);
+        }
+    }
+    
+    private void reregisterSensor() {
+        try {
+            if (sensorManager != null && gyroscope != null) {
+                // Unregister first
+                sensorManager.unregisterListener(this);
+                
+                // Wait a bit
+                Thread.sleep(100);
+                
+                // Re-register with higher priority
+                boolean registered = sensorManager.registerListener(
+                    this, 
+                    gyroscope, 
+                    SensorManager.SENSOR_DELAY_GAME,
+                    sensorHealthHandler
+                );
+                
+                if (registered) {
+                    Log.d(TAG, "Sensor re-registered successfully");
+                } else {
+                    Log.e(TAG, "Failed to re-register sensor");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error re-registering sensor", e);
         }
     }
     
@@ -160,6 +329,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     @Override
     public void onSensorChanged(SensorEvent event) {
         try {
+            // Update last sensor event time for health monitoring
+            lastSensorEventTime = System.currentTimeMillis();
+            
             if (event != null && event.values != null && event.values.length >= 3) {
                 float x = event.values[0];
                 float y = event.values[1];
@@ -183,11 +355,17 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                     
                     if (detected) {
                         // Motion detected - start alarm actions
+                        Log.w(TAG, "🚨 MOTION DETECTED! Starting alarm actions...");
+                        Log.w(TAG, "🚨 Step 1: Sending SMS alert");
                         sendMotionAlert();
+                        Log.w(TAG, "🚨 Step 2: Starting beeping");
                         startBeeping();
+                        Log.w(TAG, "🚨 Step 3: Making phone call");
                         makePhoneCall();
+                        Log.w(TAG, "🚨 All alarm actions initiated");
                     } else {
                         // Motion stopped - stop alarm actions
+                        Log.d(TAG, "Motion stopped - stopping alarm actions");
                         stopBeeping();
                     }
                     
@@ -238,44 +416,106 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     
     private void makePhoneCall() {
         try {
-            if (stateManager == null) return;
+            Log.w(TAG, "📞 MAKE PHONE CALL - Starting call attempt");
             
-            // Only call if device is locked, alarm enabled, and call enabled
-            if (!stateManager.isLocked() || !stateManager.getAlarm() || !stateManager.getCall()) {
-                Log.d(TAG, "Phone call skipped - conditions not met");
+            if (stateManager == null) {
+                Log.e(TAG, "❌ StateManager is null - cannot make call");
                 return;
             }
+            
+            // Check all conditions with detailed logging
+            boolean isLocked = stateManager.isLocked();
+            boolean alarmEnabled = stateManager.getAlarm();
+            boolean callEnabled = stateManager.getCall();
+            
+            Log.w(TAG, "📞 CALL CONDITIONS CHECK:");
+            Log.w(TAG, "  🔒 Device locked: " + isLocked + " (status: " + stateManager.getStatus() + ")");
+            Log.w(TAG, "  🚨 Alarm enabled: " + alarmEnabled);
+            Log.w(TAG, "  📲 Call enabled: " + callEnabled);
+            
+            if (!isLocked || !alarmEnabled || !callEnabled) {
+                Log.e(TAG, "❌ Phone call BLOCKED - conditions not met!");
+                return;
+            }
+            
+            Log.w(TAG, "✅ All conditions met - proceeding with call");
             
             // Check cooldown period using stored time from state manager
             long currentTime = System.currentTimeMillis();
             long storedLastCallTime = stateManager.getLastCallTime();
-            if (currentTime - storedLastCallTime < CALL_COOLDOWN) {
-                Log.d(TAG, "Phone call skipped - cooldown period");
+            long timeSinceLastCall = currentTime - storedLastCallTime;
+            
+            Log.w(TAG, "📞 COOLDOWN CHECK:");
+            Log.w(TAG, "  ⏰ Current time: " + currentTime);
+            Log.w(TAG, "  ⏰ Last call time: " + storedLastCallTime);
+            Log.w(TAG, "  ⏰ Time since last call: " + (timeSinceLastCall / 1000) + "s");
+            Log.w(TAG, "  ⏰ Cooldown period: " + (CALL_COOLDOWN / 1000) + "s");
+            
+            if (timeSinceLastCall < CALL_COOLDOWN) {
+                Log.e(TAG, "❌ Phone call BLOCKED - cooldown active (" + 
+                      ((CALL_COOLDOWN - timeSinceLastCall) / 1000) + "s remaining)");
                 return;
             }
             
+            Log.w(TAG, "✅ Cooldown period passed");
+            
             String adminNumber = stateManager.getAdminNumber();
-            if (adminNumber != null && !adminNumber.isEmpty()) {
-                Log.d(TAG, "Attempting to call admin number: " + adminNumber);
-                
-                try {
-                    Intent callIntent = new Intent(Intent.ACTION_CALL);
-                    callIntent.setData(Uri.parse("tel:" + adminNumber));
-                    callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    
-                    startActivity(callIntent);
-                    stateManager.setLastCallTime(currentTime);
-                    
-                    Log.d(TAG, "Phone call initiated successfully to: " + adminNumber);
-                } catch (Exception e) {
-                    Log.e(TAG, "Error starting phone call to " + adminNumber, e);
-                }
-            } else {
-                Log.e(TAG, "No admin number set for phone calls");
+            Log.w(TAG, "📞 ADMIN NUMBER CHECK:");
+            Log.w(TAG, "  📞 Admin number: '" + adminNumber + "'");
+            
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+                Log.e(TAG, "❌ Phone call BLOCKED - invalid admin number: " + adminNumber);
+                return;
             }
+            
+            Log.w(TAG, "✅ Valid admin number found");
+            Log.w(TAG, "📞 ATTEMPTING TO CALL: " + adminNumber);
+            
+            // Step 1: Wake up the screen first
+            wakeUpScreen();
+            
+            // Step 2: Wait a moment for screen to wake up, then initiate call
+            Handler callHandler = new Handler(Looper.getMainLooper());
+            callHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Log.d(TAG, "Initiating phone call after screen wake-up");
+                        
+                        Intent callIntent = new Intent(Intent.ACTION_CALL);
+                        callIntent.setData(Uri.parse("tel:" + adminNumber));
+                        callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                          Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                                          Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        
+                        // Add flags to bring the call to foreground
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            callIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        }
+                        
+                        startActivity(callIntent);
+                        stateManager.setLastCallTime(System.currentTimeMillis());
+                        
+                        Log.d(TAG, "Phone call initiated successfully to: " + adminNumber);
+                        
+                        // Release screen wake lock after a delay
+                        callHandler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                releaseScreenWakeLock();
+                            }
+                        }, 5000); // Release after 5 seconds
+                        
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error starting phone call to " + adminNumber, e);
+                        releaseScreenWakeLock();
+                    }
+                }
+            }, 1000); // Wait 1 second for screen to wake up
             
         } catch (Exception e) {
             Log.e(TAG, "Error making phone call", e);
+            releaseScreenWakeLock();
         }
     }
     
@@ -329,11 +569,20 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             // Stop beeping
             stopBeeping();
             
+            // Stop sensor health monitoring
+            if (sensorHealthHandler != null && sensorHealthRunnable != null) {
+                sensorHealthHandler.removeCallbacks(sensorHealthRunnable);
+            }
+            
             // Release tone generator
             if (toneGenerator != null) {
                 toneGenerator.release();
                 toneGenerator = null;
             }
+            
+            // Release wake locks
+            releaseWakeLock();
+            releaseScreenWakeLock();
             
             Log.d(TAG, "Service destroyed");
         } catch (Exception e) {

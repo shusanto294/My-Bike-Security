@@ -59,8 +59,15 @@ public class AppStateManager {
     }
     
     public void setAdminNumber(String number) {
-        prefs.edit().putString(KEY_ADMIN_NUMBER, number).apply();
-        Log.d(TAG, "Admin number changed to: " + number);
+        String oldNumber = prefs.getString(KEY_ADMIN_NUMBER, "+11111111111");
+        boolean success = prefs.edit().putString(KEY_ADMIN_NUMBER, number).commit();
+        String verifyNumber = prefs.getString(KEY_ADMIN_NUMBER, "+11111111111");
+        
+        Log.w(TAG, "🔄 ADMIN NUMBER UPDATE:");
+        Log.w(TAG, "  📞 Old number: " + oldNumber);
+        Log.w(TAG, "  📞 New number: " + number);
+        Log.w(TAG, "  💾 Save success: " + success);
+        Log.w(TAG, "  ✅ Verified number: " + verifyNumber);
     }
     
     public boolean getCall() {

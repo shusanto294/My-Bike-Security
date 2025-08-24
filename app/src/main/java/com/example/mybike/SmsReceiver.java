@@ -29,7 +29,7 @@ public class SmsReceiver extends BroadcastReceiver {
                                 String sender = smsMessage.getDisplayOriginatingAddress();
                                 String messageBody = smsMessage.getDisplayMessageBody();
                                 
-                                Log.d(TAG, "SMS received from: " + sender + ", Message: " + messageBody);
+                                Log.w(TAG, "🔔 SMS RECEIVED from: " + sender + ", Message: '" + messageBody + "'");
                                 
                                 processCommand(context, sender, messageBody);
                             }
@@ -47,27 +47,37 @@ public class SmsReceiver extends BroadcastReceiver {
             AppStateManager stateManager = AppStateManager.getInstance(context);
             
             // Process commands from any phone number
-            Log.d(TAG, "Processing SMS command from: " + sender);
+            Log.w(TAG, "🔍 PROCESSING SMS COMMAND from: " + sender);
+            Log.w(TAG, "📝 Original message: '" + message + "'");
             
             String message_lower = message.trim().toLowerCase();
+            Log.w(TAG, "📝 Lowercase message: '" + message_lower + "'");
             String response = null;
             
             // Check for setadminnumber command (needs special handling for number parameter)
-            if (message_lower.startsWith("setadminnumber ")) {
+            if (message_lower.startsWith("setadminnumber")) {
+                Log.d(TAG, "Processing setadminnumber command");
                 String[] parts = message.trim().split("\\s+", 2);
+                Log.d(TAG, "Command parts: " + java.util.Arrays.toString(parts));
+                
                 if (parts.length == 2) {
                     String newAdminNumber = parts[1].trim();
+                    Log.d(TAG, "New admin number candidate: '" + newAdminNumber + "'");
+                    
                     if (isValidPhoneNumber(newAdminNumber)) {
+                        String oldNumber = stateManager.getAdminNumber();
                         stateManager.setAdminNumber(newAdminNumber);
-                        response = "Admin number changed to " + newAdminNumber;
-                        Log.d(TAG, "Admin number changed to: " + newAdminNumber);
+                        String updatedNumber = stateManager.getAdminNumber();
+                        
+                        response = "Admin number changed from " + oldNumber + " to " + updatedNumber;
+                        Log.w(TAG, "✅ ADMIN NUMBER UPDATED: " + oldNumber + " → " + updatedNumber);
                     } else {
-                        response = "Invalid phone number format. Please use: setadminnumber 01234567890";
-                        Log.d(TAG, "Invalid phone number format: " + newAdminNumber);
+                        response = "Invalid phone number format. Please use: setadminnumber 01743395086";
+                        Log.w(TAG, "❌ Invalid phone number format: '" + newAdminNumber + "'");
                     }
                 } else {
-                    response = "Invalid format. Use: setadminnumber 01234567890";
-                    Log.d(TAG, "Invalid setadminnumber command format");
+                    response = "Invalid format. Use: setadminnumber 01743395086";
+                    Log.w(TAG, "❌ Invalid setadminnumber command format - expected 2 parts, got: " + parts.length);
                 }
             } else {
                 // Handle other commands
@@ -102,6 +112,21 @@ public class SmsReceiver extends BroadcastReceiver {
                         response = "Alarm setting changed to false";
                         break;
                         
+                    case "testcall":
+                        // Test calling functionality
+                        Log.w(TAG, "📞 TEST CALL command received - triggering test call");
+                        testPhoneCall(context);
+                        response = "Test call initiated. Check logs for results.";
+                        break;
+                        
+                    case "status":
+                        // Get current status
+                        response = "Status: " + stateManager.getStatus() + 
+                                 "\nAdmin: " + stateManager.getAdminNumber() +
+                                 "\nCall: " + stateManager.getCall() +
+                                 "\nAlarm: " + stateManager.getAlarm();
+                        break;
+                        
                     default:
                         // No response for unrecognized commands
                         Log.d(TAG, "Unrecognized command: " + message_lower);
@@ -127,20 +152,57 @@ public class SmsReceiver extends BroadcastReceiver {
     
     private boolean isValidPhoneNumber(String phoneNumber) {
         try {
-            // Remove any non-digit characters for validation
-            String cleanNumber = phoneNumber.replaceAll("[^0-9]", "");
+            Log.d(TAG, "Validating phone number: '" + phoneNumber + "'");
             
-            // Check if it's a reasonable length (8-15 digits is typical for phone numbers)
-            if (cleanNumber.length() >= 8 && cleanNumber.length() <= 15) {
+            // Allow phone numbers with or without + prefix
+            String cleanNumber = phoneNumber.replaceAll("[^0-9+]", "");
+            
+            // Remove + from beginning for length check
+            String digitsOnly = cleanNumber.replaceAll("\\+", "");
+            
+            Log.d(TAG, "Clean number: '" + cleanNumber + "', digits only: '" + digitsOnly + "', length: " + digitsOnly.length());
+            
+            // Check if it's a reasonable length (7-15 digits is typical for phone numbers)
+            // Bangladesh numbers like 01743395086 are 11 digits
+            if (digitsOnly.length() >= 7 && digitsOnly.length() <= 15) {
+                Log.d(TAG, "Phone number validation PASSED");
                 return true;
             }
             
-            Log.d(TAG, "Phone number length invalid: " + cleanNumber.length());
+            Log.w(TAG, "Phone number validation FAILED - length invalid: " + digitsOnly.length());
             return false;
             
         } catch (Exception e) {
             Log.e(TAG, "Error validating phone number", e);
             return false;
+        }
+    }
+    
+    private void testPhoneCall(Context context) {
+        try {
+            Log.w(TAG, "📞 TEST CALL - Starting direct call test");
+            AppStateManager stateManager = AppStateManager.getInstance(context);
+            
+            // Test calling logic similar to the service
+            String adminNumber = stateManager.getAdminNumber();
+            Log.w(TAG, "📞 TEST CALL - Admin number: " + adminNumber);
+            
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+                Log.e(TAG, "❌ TEST CALL FAILED - No valid admin number");
+                return;
+            }
+            
+            // Create a direct call intent
+            Intent callIntent = new Intent(Intent.ACTION_CALL);
+            callIntent.setData(android.net.Uri.parse("tel:" + adminNumber));
+            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                              Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            
+            context.startActivity(callIntent);
+            Log.w(TAG, "✅ TEST CALL - Call intent started to: " + adminNumber);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "❌ TEST CALL ERROR", e);
         }
     }
     

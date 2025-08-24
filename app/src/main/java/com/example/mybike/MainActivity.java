@@ -7,9 +7,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
@@ -69,6 +72,7 @@ public class MainActivity extends Activity {
             
             setupReceivers();
             requestPermissions();
+            requestBatteryOptimizationExemption();
             updateStateDisplay();
             setupTimer();
             
@@ -152,15 +156,30 @@ public class MainActivity extends Activity {
         
         // SMS permissions
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, 
-                new String[]{Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS}, 
+                new String[]{Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS, Manifest.permission.READ_SMS}, 
                 SMS_PERMISSION_REQUEST);
         }
         
         // Phone call permission
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CALL_PHONE}, PHONE_PERMISSION_REQUEST);
+        }
+        
+        // System alert window permission for waking screen
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!android.provider.Settings.canDrawOverlays(this)) {
+                Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                try {
+                    startActivity(intent);
+                    Toast.makeText(this, "Please allow display over other apps for reliable calling", Toast.LENGTH_LONG).show();
+                } catch (Exception e) {
+                    android.util.Log.e("MainActivity", "Error starting overlay permission settings", e);
+                }
+            }
         }
     }
     
@@ -190,6 +209,27 @@ public class MainActivity extends Activity {
         }
     }
     
+    private void requestBatteryOptimizationExemption() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    try {
+                        startActivity(intent);
+                        Toast.makeText(this, "Please whitelist MyBike to ensure motion detection works during sleep", Toast.LENGTH_LONG).show();
+                    } catch (Exception e) {
+                        android.util.Log.e("MainActivity", "Error starting battery optimization settings", e);
+                        Toast.makeText(this, "Please manually disable battery optimization for MyBike in Settings", Toast.LENGTH_LONG).show();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error requesting battery optimization exemption", e);
+        }
+    }
+    
     private void updateStateDisplay() {
         try {
             if (stateManager != null) {
@@ -204,7 +244,9 @@ public class MainActivity extends Activity {
                 }
                 
                 if (adminNumberText != null) {
-                    adminNumberText.setText(stateManager.getAdminNumber());
+                    String currentAdminNumber = stateManager.getAdminNumber();
+                    adminNumberText.setText(currentAdminNumber);
+                    android.util.Log.w("MainActivity", "🔄 Admin number display updated to: " + currentAdminNumber);
                 }
                 
                 if (callText != null) {
