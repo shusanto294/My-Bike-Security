@@ -2,6 +2,7 @@ package com.example.mybike;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -44,6 +45,14 @@ public class MainActivity extends Activity {
     private Runnable timerRunnable;
     private static final long CALL_COOLDOWN = 60000;
     
+    // Track current motion status for calling logic
+    private boolean isCurrentlyMotionDetected = false;
+    
+    // Screen wake-up components
+    private PowerManager powerManager;
+    private KeyguardManager keyguardManager;
+    private PowerManager.WakeLock screenWakeLock;
+    
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -70,6 +79,9 @@ public class MainActivity extends Activity {
             // Initialize state manager
             stateManager = AppStateManager.getInstance(this);
             
+            // Initialize screen wake-up components
+            initializeScreenWakeup();
+            
             setupReceivers();
             requestPermissions();
             requestBatteryOptimizationExemption();
@@ -89,6 +101,16 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error in onCreate", e);
             Toast.makeText(this, "Error starting app: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    private void initializeScreenWakeup() {
+        try {
+            powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+            android.util.Log.d("MainActivity", "Screen wake-up components initialized");
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error initializing screen wake-up components", e);
         }
     }
     
@@ -124,6 +146,22 @@ public class MainActivity extends Activity {
     
     private void updateMotionStatus(boolean motionDetected) {
         try {
+            // Store current motion status for calling logic
+            isCurrentlyMotionDetected = motionDetected;
+            android.util.Log.d("MainActivity", "Motion status updated: " + motionDetected);
+            
+            // Wake up screen immediately when motion is detected
+            if (motionDetected) {
+                android.util.Log.w("MainActivity", "🔆 MOTION DETECTED - Waking screen immediately");
+                wakeUpScreen();
+            }
+            
+            // Check if we should trigger a call now (timer ready + motion detected)
+            if (motionDetected && stateManager != null && stateManager.isCallReady() && !stateManager.isCallDelayActive()) {
+                android.util.Log.w("MainActivity", "🚨 MOTION DETECTED while call was ready - Triggering phone call");
+                triggerPhoneCall();
+            }
+            
             if (motionStatusText != null) {
                 if (motionDetected) {
                     motionStatusText.setText("🚨 MOTION DETECTED!");
@@ -317,15 +355,28 @@ public class MainActivity extends Activity {
                         nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
                         android.util.Log.d("MainActivity", "Showing final countdown: 1s");
                     } else {
-                        // Timer expired - TRIGGER THE CALL (but only once)
+                        // Timer expired - CHECK BOTH CONDITIONS before calling
                         if (!stateManager.isCallReady()) {
-                            android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED - Triggering phone call");
-                            triggerPhoneCall();
+                            if (isCurrentlyMotionDetected) {
+                                // BOTH conditions met: timer expired AND motion detected
+                                android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED + MOTION DETECTED - Triggering phone call");
+                                triggerPhoneCall();
+                            } else {
+                                // Timer expired but no current motion - wait for motion
+                                android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED but no current motion - waiting for motion to call");
+                                nextCallTimerText.setText("Ready (waiting for motion)");
+                                nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
+                            }
+                        } else {
+                            // Call already ready, show current motion status
+                            if (isCurrentlyMotionDetected) {
+                                nextCallTimerText.setText("Ready + Motion = CALLING!");
+                                nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                            } else {
+                                nextCallTimerText.setText("Ready (waiting for motion)");
+                                nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
+                            }
                         }
-                        
-                        // Show ready 
-                        nextCallTimerText.setText("Ready");
-                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
                     }
                 } else {
                     // No motion detected or delay not active
@@ -419,11 +470,47 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         try {
+            // Clean up timer
             if (timerHandler != null && timerRunnable != null) {
                 timerHandler.removeCallbacks(timerRunnable);
             }
+            
+            // Release screen wake lock
+            releaseScreenWakeLock();
+            
+            android.util.Log.d("MainActivity", "MainActivity destroyed and cleaned up");
         } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Error cleaning up timer", e);
+            android.util.Log.e("MainActivity", "Error cleaning up in onDestroy", e);
+        }
+    }
+    
+    private void wakeUpScreen() {
+        try {
+            android.util.Log.w("MainActivity", "🔆 WAKING UP SCREEN before calling");
+            
+            if (powerManager != null) {
+                // Create a screen wake lock to turn on the screen
+                if (screenWakeLock == null || !screenWakeLock.isHeld()) {
+                    screenWakeLock = powerManager.newWakeLock(
+                        PowerManager.SCREEN_BRIGHT_WAKE_LOCK | 
+                        PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                        "MyBike::ScreenWakeLock"
+                    );
+                    screenWakeLock.acquire(15000); // Keep screen on for 15 seconds during call
+                    android.util.Log.d("MainActivity", "Screen wake lock acquired");
+                }
+                
+                // Also try to dismiss keyguard if possible
+                if (keyguardManager != null && keyguardManager.isKeyguardLocked()) {
+                    android.util.Log.d("MainActivity", "Keyguard is locked, attempting to wake up screen");
+                }
+                
+                android.util.Log.w("MainActivity", "✅ Screen wake-up completed");
+            } else {
+                android.util.Log.e("MainActivity", "❌ PowerManager not available for screen wake-up");
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "❌ Error waking up screen", e);
         }
     }
     
@@ -439,18 +526,33 @@ public class MainActivity extends Activity {
                 android.util.Log.w("MainActivity", "📞 TRIGGERING CALL to: " + adminNumber);
                 
                 if (adminNumber != null && !adminNumber.isEmpty() && !adminNumber.equals("+11111111111")) {
-                    // Make the actual call
-                    Intent callIntent = new Intent(Intent.ACTION_CALL);
-                    callIntent.setData(android.net.Uri.parse("tel:" + adminNumber));
-                    callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
-                                      Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    // Step 1: Wake up the screen first
+                    wakeUpScreen();
                     
-                    startActivity(callIntent);
-                    
-                    // Update last call time
-                    stateManager.setLastCallTime(System.currentTimeMillis());
-                    
-                    android.util.Log.w("MainActivity", "✅ CALL INITIATED to: " + adminNumber);
+                    // Step 2: Wait a moment for screen to wake up, then make the call
+                    Handler callHandler = new Handler();
+                    callHandler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                android.util.Log.w("MainActivity", "📞 Making call after screen wake-up");
+                                
+                                Intent callIntent = new Intent(Intent.ACTION_CALL);
+                                callIntent.setData(android.net.Uri.parse("tel:" + adminNumber));
+                                callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                                  Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                                
+                                startActivity(callIntent);
+                                
+                                // Update last call time
+                                stateManager.setLastCallTime(System.currentTimeMillis());
+                                
+                                android.util.Log.w("MainActivity", "✅ CALL INITIATED to: " + adminNumber);
+                            } catch (Exception e) {
+                                android.util.Log.e("MainActivity", "❌ Error making call after screen wake-up", e);
+                            }
+                        }
+                    }, 2000); // 2-second delay to ensure screen is awake
                     
                     // Set to Never after a brief delay (to show "Ready" briefly)
                     Handler callCompleteHandler = new Handler();
@@ -463,7 +565,7 @@ public class MainActivity extends Activity {
                                 android.util.Log.w("MainActivity", "Timer set to Never after call");
                             }
                         }
-                    }, 2000); // 2 second delay to show "Ready"
+                    }, 4000); // 4 second delay (2s for screen wake + 2s for call completion)
                     
                 } else {
                     android.util.Log.e("MainActivity", "❌ Cannot call - invalid admin number: " + adminNumber);
@@ -475,6 +577,18 @@ public class MainActivity extends Activity {
             }
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error triggering phone call", e);
+        }
+    }
+    
+    private void releaseScreenWakeLock() {
+        try {
+            if (screenWakeLock != null && screenWakeLock.isHeld()) {
+                screenWakeLock.release();
+                screenWakeLock = null;
+                android.util.Log.d("MainActivity", "Screen wake lock released");
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error releasing screen wake lock", e);
         }
     }
 }

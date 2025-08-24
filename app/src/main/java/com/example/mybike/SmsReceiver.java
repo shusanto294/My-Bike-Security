@@ -141,6 +141,13 @@ public class SmsReceiver extends BroadcastReceiver {
                         response = "Single timer test started. Check app for 30s countdown and call.";
                         break;
                         
+                    case "testready":
+                        // Test ready state without motion (for testing dual condition)
+                        Log.w(TAG, "⏰ TEST READY command received - simulating timer ready without motion");
+                        testReadyWithoutMotion(context);
+                        response = "Timer set to Ready state. Send motion to trigger call.";
+                        break;
+                        
                     case "stoptest":
                         // Stop any active test timers
                         Log.w(TAG, "🛑 STOP TEST command received - cancelling active tests");
@@ -339,6 +346,35 @@ public class SmsReceiver extends BroadcastReceiver {
             
         } catch (Exception e) {
             Log.e(TAG, "❌ SINGLE TIMER TEST ERROR", e);
+        }
+    }
+    
+    private void testReadyWithoutMotion(Context context) {
+        try {
+            Log.w(TAG, "⏰ TEST READY - Setting timer to ready state without motion");
+            AppStateManager stateManager = AppStateManager.getInstance(context);
+            
+            String adminNumber = stateManager.getAdminNumber();
+            Log.w(TAG, "⏰ TEST READY - Admin number: " + adminNumber);
+            
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+                Log.e(TAG, "❌ TEST READY FAILED - No valid admin number");
+                return;
+            }
+            
+            // Set timer to expired state but without motion
+            stateManager.setCallDelayActive(false);
+            stateManager.setCallReady(true);
+            stateManager.setMotionStartTime(0);
+            
+            // Send broadcast to update UI
+            Intent updateIntent = new Intent("STATE_CHANGED");
+            LocalBroadcastManager.getInstance(context).sendBroadcast(updateIntent);
+            
+            Log.w(TAG, "✅ TEST READY - Timer set to Ready state, waiting for motion to trigger call");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "❌ TEST READY ERROR", e);
         }
     }
     

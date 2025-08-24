@@ -211,7 +211,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                         PowerManager.ACQUIRE_CAUSES_WAKEUP,
                         "MyBike::ScreenWakeLock"
                     );
-                    screenWakeLock.acquire(10000); // Keep screen on for 10 seconds
+                    screenWakeLock.acquire(40000); // Keep screen on for 40 seconds (enough for 30s timer + call)
                     Log.d(TAG, "Screen wake lock acquired");
                 }
                 
@@ -526,13 +526,15 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                     if (detected) {
                         // Motion detected - start alarm actions
                         Log.w(TAG, "🚨 MOTION DETECTED! Starting alarm actions...");
-                        Log.w(TAG, "🚨 Step 1: Sending SMS alert");
+                        Log.w(TAG, "🚨 Step 1: WAKING UP SCREEN immediately");
+                        wakeUpScreen();
+                        Log.w(TAG, "🚨 Step 2: Sending SMS alert");
                         sendMotionAlert();
-                        Log.w(TAG, "🚨 Step 2: Starting beeping");
+                        Log.w(TAG, "🚨 Step 3: Starting beeping");
                         startBeeping();
-                        Log.w(TAG, "🚨 Step 3: Starting 30-second call timer");
+                        Log.w(TAG, "🚨 Step 4: Starting 30-second call timer");
                         startCallTimer();
-                        Log.w(TAG, "🚨 All alarm actions initiated");
+                        Log.w(TAG, "🚨 All alarm actions initiated with screen awake");
                     } else {
                         // Motion stopped - stop alarm actions but KEEP the call timer running
                         Log.d(TAG, "Motion stopped - stopping beeping but keeping call timer");
