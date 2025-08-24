@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
 import android.util.Log;
@@ -119,6 +120,34 @@ public class SmsReceiver extends BroadcastReceiver {
                         response = "Test call initiated. Check logs for results.";
                         break;
                         
+                    case "testdelay":
+                        // Test delayed calling functionality
+                        Log.w(TAG, "📞 TEST DELAY CALL command received - triggering delayed call test");
+                        testDelayedCall(context);
+                        response = "Test delayed call started (30s delay). Check logs for results.";
+                        break;
+                        
+                    case "testtimer":
+                        // Test the timer display
+                        Log.w(TAG, "⏱️ TEST TIMER command received - starting timer test");
+                        testTimerDisplay(context);
+                        response = "Timer test started. Check app display for 30s countdown.";
+                        break;
+                        
+                    case "testmotion":
+                        // Test motion detection and timer
+                        Log.w(TAG, "🚨 TEST MOTION command received - simulating motion detection");
+                        testSingleTimer(context);
+                        response = "Single timer test started. Check app for 30s countdown and call.";
+                        break;
+                        
+                    case "stoptest":
+                        // Stop any active test timers
+                        Log.w(TAG, "🛑 STOP TEST command received - cancelling active tests");
+                        stopAllTests(context);
+                        response = "All tests stopped. Timer should show 'Never'.";
+                        break;
+                        
                     case "status":
                         // Get current status
                         response = "Status: " + stateManager.getStatus() + 
@@ -203,6 +232,134 @@ public class SmsReceiver extends BroadcastReceiver {
             
         } catch (Exception e) {
             Log.e(TAG, "❌ TEST CALL ERROR", e);
+        }
+    }
+    
+    private void testDelayedCall(Context context) {
+        try {
+            Log.w(TAG, "📞 TEST DELAYED CALL - Starting 30-second delayed call test");
+            AppStateManager stateManager = AppStateManager.getInstance(context);
+            
+            String adminNumber = stateManager.getAdminNumber();
+            Log.w(TAG, "📞 TEST DELAYED CALL - Admin number: " + adminNumber);
+            
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+                Log.e(TAG, "❌ TEST DELAYED CALL FAILED - No valid admin number");
+                return;
+            }
+            
+            // Create a delayed call using Handler
+            Handler delayHandler = new Handler(android.os.Looper.getMainLooper());
+            delayHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    Log.w(TAG, "📞 TEST DELAYED CALL - 30 seconds passed, executing call");
+                    try {
+                        Intent callIntent = new Intent(Intent.ACTION_CALL);
+                        callIntent.setData(android.net.Uri.parse("tel:" + adminNumber));
+                        callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                          Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        
+                        context.startActivity(callIntent);
+                        Log.w(TAG, "✅ TEST DELAYED CALL - Call executed after delay to: " + adminNumber);
+                        
+                    } catch (Exception e) {
+                        Log.e(TAG, "❌ TEST DELAYED CALL ERROR during execution", e);
+                    }
+                }
+            }, 30000); // 30 second delay
+            
+            Log.w(TAG, "✅ TEST DELAYED CALL - 30-second timer started");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "❌ TEST DELAYED CALL ERROR", e);
+        }
+    }
+    
+    private void testTimerDisplay(Context context) {
+        try {
+            Log.w(TAG, "⏱️ TEST TIMER - Starting timer display test");
+            AppStateManager stateManager = AppStateManager.getInstance(context);
+            
+            // Simulate motion delay timer
+            long currentTime = System.currentTimeMillis();
+            stateManager.setCallDelayActive(true);
+            stateManager.setMotionStartTime(currentTime);
+            
+            // Send broadcast to update UI
+            Intent updateIntent = new Intent("STATE_CHANGED");
+            LocalBroadcastManager.getInstance(context).sendBroadcast(updateIntent);
+            
+            Log.w(TAG, "⏱️ TEST TIMER - Timer state activated, UI should show countdown");
+            
+            // Auto-clear after 35 seconds (5 seconds after the 30-second timer would end)
+            Handler clearHandler = new Handler(android.os.Looper.getMainLooper());
+            clearHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    Log.w(TAG, "⏱️ TEST TIMER - Auto-clearing timer test state");
+                    stateManager.setCallDelayActive(false);
+                    stateManager.setMotionStartTime(0);
+                    
+                    // Send broadcast to update UI
+                    Intent clearIntent = new Intent("STATE_CHANGED");
+                    LocalBroadcastManager.getInstance(context).sendBroadcast(clearIntent);
+                }
+            }, 35000); // 35 seconds
+            
+        } catch (Exception e) {
+            Log.e(TAG, "❌ TEST TIMER ERROR", e);
+        }
+    }
+    
+    private void testSingleTimer(Context context) {
+        try {
+            Log.w(TAG, "⏱️ SINGLE TIMER TEST - Starting unified timer test");
+            AppStateManager stateManager = AppStateManager.getInstance(context);
+            
+            String adminNumber = stateManager.getAdminNumber();
+            Log.w(TAG, "⏱️ SINGLE TIMER - Admin number: " + adminNumber);
+            
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+                Log.e(TAG, "❌ SINGLE TIMER TEST FAILED - No valid admin number");
+                return;
+            }
+            
+            // Start the single timer system - set motion start time only
+            long currentTime = System.currentTimeMillis();
+            stateManager.setCallDelayActive(true);
+            stateManager.setMotionStartTime(currentTime);
+            stateManager.setCallReady(false);
+            
+            // Send broadcast to update UI - MainActivity timer will handle everything
+            Intent updateIntent = new Intent("STATE_CHANGED");
+            LocalBroadcastManager.getInstance(context).sendBroadcast(updateIntent);
+            
+            Log.w(TAG, "✅ SINGLE TIMER TEST - Timer started, MainActivity will handle countdown and calling");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "❌ SINGLE TIMER TEST ERROR", e);
+        }
+    }
+    
+    private void stopAllTests(Context context) {
+        try {
+            Log.w(TAG, "🛑 STOP ALL TESTS - Cancelling all active test timers");
+            AppStateManager stateManager = AppStateManager.getInstance(context);
+            
+            // Clear all delay states
+            stateManager.setCallDelayActive(false);
+            stateManager.setCallReady(false);
+            stateManager.setMotionStartTime(0);
+            
+            // Send broadcast to update UI
+            Intent updateIntent = new Intent("STATE_CHANGED");
+            LocalBroadcastManager.getInstance(context).sendBroadcast(updateIntent);
+            
+            Log.w(TAG, "✅ All tests stopped - UI should show 'Never'");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "❌ ERROR stopping tests", e);
         }
     }
     

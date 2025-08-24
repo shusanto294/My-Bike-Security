@@ -13,6 +13,9 @@ public class AppStateManager {
     private static final String KEY_CALL = "call";
     private static final String KEY_ALARM = "alarm";
     private static final String KEY_LAST_CALL_TIME = "last_call_time";
+    private static final String KEY_MOTION_START_TIME = "motion_start_time";
+    private static final String KEY_IS_CALL_DELAY_ACTIVE = "is_call_delay_active";
+    private static final String KEY_IS_CALL_READY = "is_call_ready";
     
     private static AppStateManager instance;
     private SharedPreferences prefs;
@@ -99,6 +102,33 @@ public class AppStateManager {
     public void setLastCallTime(long time) {
         prefs.edit().putLong(KEY_LAST_CALL_TIME, time).apply();
         Log.d(TAG, "Last call time updated: " + time);
+    }
+    
+    public long getMotionStartTime() {
+        return prefs.getLong(KEY_MOTION_START_TIME, 0);
+    }
+    
+    public void setMotionStartTime(long time) {
+        prefs.edit().putLong(KEY_MOTION_START_TIME, time).commit();
+        Log.d(TAG, "Motion start time updated: " + time);
+    }
+    
+    public boolean isCallDelayActive() {
+        return prefs.getBoolean(KEY_IS_CALL_DELAY_ACTIVE, false);
+    }
+    
+    public void setCallDelayActive(boolean active) {
+        prefs.edit().putBoolean(KEY_IS_CALL_DELAY_ACTIVE, active).commit();
+        Log.d(TAG, "Call delay active status changed to: " + active);
+    }
+    
+    public boolean isCallReady() {
+        return prefs.getBoolean(KEY_IS_CALL_READY, false);
+    }
+    
+    public void setCallReady(boolean ready) {
+        prefs.edit().putBoolean(KEY_IS_CALL_READY, ready).commit();
+        Log.d(TAG, "Call ready status changed to: " + ready);
     }
     
     public String getAllStatesString() {

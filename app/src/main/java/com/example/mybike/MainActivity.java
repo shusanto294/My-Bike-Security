@@ -279,26 +279,59 @@ public class MainActivity extends Activity {
             if (stateManager != null && lastCallTimeText != null && nextCallTimerText != null) {
                 long lastCallTime = stateManager.getLastCallTime();
                 
+                // Display last call time
                 if (lastCallTime == 0) {
                     lastCallTimeText.setText("Never");
-                    nextCallTimerText.setText("Ready");
-                    nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
                 } else {
                     SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
                     lastCallTimeText.setText(sdf.format(new Date(lastCallTime)));
-                    
+                }
+                
+                // Check timer states
+                boolean isDelayActive = stateManager.isCallDelayActive();
+                boolean isCallReady = stateManager.isCallReady();
+                long motionStartTime = stateManager.getMotionStartTime();
+                
+                if (isCallReady) {
+                    // Show "Ready" when timer reached 30s but call hasn't been made yet
+                    nextCallTimerText.setText("Ready");
+                    nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
+                    android.util.Log.d("MainActivity", "Showing Ready - call about to be made");
+                } else if (isDelayActive && motionStartTime > 0) {
+                    // Show countdown for motion delay (30 seconds)
                     long currentTime = System.currentTimeMillis();
-                    long timeSinceLastCall = currentTime - lastCallTime;
+                    long elapsed = currentTime - motionStartTime;
+                    long remainingTime = 30000 - elapsed; // 30 seconds in milliseconds
                     
-                    if (timeSinceLastCall >= CALL_COOLDOWN) {
+                    // Debug logging
+                    android.util.Log.d("MainActivity", "Timer calculation: elapsed=" + elapsed + "ms, remaining=" + remainingTime + "ms, motionStartTime=" + motionStartTime);
+                    
+                    if (remainingTime > 1000) { // Show countdown if more than 1 second left
+                        long seconds = Math.max(1, remainingTime / 1000); // Ensure minimum 1 second display
+                        nextCallTimerText.setText("Calling in " + seconds + "s");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                        android.util.Log.d("MainActivity", "Showing countdown: " + seconds + "s");
+                    } else if (remainingTime > 0) {
+                        // Less than 1 second remaining
+                        nextCallTimerText.setText("Calling in 1s");
+                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                        android.util.Log.d("MainActivity", "Showing final countdown: 1s");
+                    } else {
+                        // Timer expired - TRIGGER THE CALL (but only once)
+                        if (!stateManager.isCallReady()) {
+                            android.util.Log.w("MainActivity", "⏰ TIMER EXPIRED - Triggering phone call");
+                            triggerPhoneCall();
+                        }
+                        
+                        // Show ready 
                         nextCallTimerText.setText("Ready");
                         nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
-                    } else {
-                        long remainingTime = CALL_COOLDOWN - timeSinceLastCall;
-                        long seconds = remainingTime / 1000;
-                        nextCallTimerText.setText(seconds + "s");
-                        nextCallTimerText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
                     }
+                } else {
+                    // No motion detected or delay not active
+                    nextCallTimerText.setText("Never");
+                    nextCallTimerText.setTextColor(getResources().getColor(android.R.color.darker_gray));
+                    android.util.Log.d("MainActivity", "No delay active, showing Never");
                 }
             }
         } catch (Exception e) {
@@ -313,7 +346,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     updateCallTimeDisplay();
-                    timerHandler.postDelayed(this, 1000); // Update every second
+                    timerHandler.postDelayed(this, 500); // Update every 500ms for smoother countdown
                 }
             };
             timerHandler.post(timerRunnable);
@@ -391,6 +424,57 @@ public class MainActivity extends Activity {
             }
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error cleaning up timer", e);
+        }
+    }
+    
+    private void triggerPhoneCall() {
+        try {
+            if (stateManager != null) {
+                // Clear timer states and set ready
+                stateManager.setCallDelayActive(false);
+                stateManager.setCallReady(true);
+                stateManager.setMotionStartTime(0);
+                
+                String adminNumber = stateManager.getAdminNumber();
+                android.util.Log.w("MainActivity", "📞 TRIGGERING CALL to: " + adminNumber);
+                
+                if (adminNumber != null && !adminNumber.isEmpty() && !adminNumber.equals("+11111111111")) {
+                    // Make the actual call
+                    Intent callIntent = new Intent(Intent.ACTION_CALL);
+                    callIntent.setData(android.net.Uri.parse("tel:" + adminNumber));
+                    callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                      Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    
+                    startActivity(callIntent);
+                    
+                    // Update last call time
+                    stateManager.setLastCallTime(System.currentTimeMillis());
+                    
+                    android.util.Log.w("MainActivity", "✅ CALL INITIATED to: " + adminNumber);
+                    
+                    // Set to Never after a brief delay (to show "Ready" briefly)
+                    Handler callCompleteHandler = new Handler();
+                    callCompleteHandler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (stateManager != null) {
+                                stateManager.setCallReady(false);
+                                updateCallTimeDisplay(); // This will show "Never"
+                                android.util.Log.w("MainActivity", "Timer set to Never after call");
+                            }
+                        }
+                    }, 2000); // 2 second delay to show "Ready"
+                    
+                } else {
+                    android.util.Log.e("MainActivity", "❌ Cannot call - invalid admin number: " + adminNumber);
+                    // Set to never if can't call
+                    stateManager.setCallDelayActive(false);
+                    stateManager.setCallReady(false);
+                    stateManager.setMotionStartTime(0);
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error triggering phone call", e);
         }
     }
 }
