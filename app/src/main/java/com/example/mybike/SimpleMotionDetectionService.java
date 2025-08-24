@@ -568,36 +568,41 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 @Override
                 public void run() {
                     if (isBeeping && stateManager != null && stateManager.getAlarm()) {
-                        // Check if previous beep is still playing
-                        if (!isCurrentlyPlayingBeep) {
-                            try {
-                                isCurrentlyPlayingBeep = true;
-                                toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500);
-                                Log.d(TAG, "🔊 Beep started (500ms duration)");
-                                
-                                // Schedule completion of this beep
-                                beepHandler.postDelayed(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        isCurrentlyPlayingBeep = false;
-                                        Log.d(TAG, "🔊 Beep completed");
+                        try {
+                            // Play ONE beep
+                            isCurrentlyPlayingBeep = true;
+                            toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500);
+                            Log.d(TAG, "🔊 Beep started - will schedule next after this completes");
+                            
+                            // Schedule the NEXT beep only after this one finishes (500ms + small gap)
+                            beepHandler.postDelayed(new Runnable() {
+                                @Override
+                                public void run() {
+                                    isCurrentlyPlayingBeep = false;
+                                    Log.d(TAG, "🔊 Beep completed");
+                                    
+                                    // Only schedule next beep if still beeping
+                                    if (isBeeping && stateManager != null && stateManager.getAlarm()) {
+                                        Log.d(TAG, "🔊 Scheduling next beep");
+                                        beepHandler.postDelayed(beepRunnable, 300); // 300ms silence gap
+                                    } else {
+                                        Log.d(TAG, "🔇 Beeping cycle ended");
                                     }
-                                }, 500); // Match the beep duration
-                                
-                            } catch (Exception e) {
-                                Log.e(TAG, "Error playing beep", e);
-                                isCurrentlyPlayingBeep = false;
+                                }
+                            }, 500); // Wait exactly 500ms for current beep to finish
+                            
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error playing beep", e);
+                            isCurrentlyPlayingBeep = false;
+                            // Try again after a delay if still beeping
+                            if (isBeeping) {
+                                beepHandler.postDelayed(this, 1000);
                             }
-                        } else {
-                            Log.d(TAG, "🔊 Skipping beep - previous beep still playing");
                         }
-                        
-                        // Schedule next beep attempt
-                        beepHandler.postDelayed(this, BEEP_INTERVAL);
                     } else {
                         Log.d(TAG, "🔇 Beeping stopped - isBeeping:" + isBeeping + ", alarm:" + 
                              (stateManager != null ? stateManager.getAlarm() : "null"));
-                        isCurrentlyPlayingBeep = false; // Reset state when stopping
+                        isCurrentlyPlayingBeep = false;
                     }
                 }
             };
@@ -700,12 +705,13 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 return;
             }
             
-            if (!isBeeping) {
+            if (!isBeeping && !isCurrentlyPlayingBeep) {
                 isBeeping = true;
+                isCurrentlyPlayingBeep = false; // Ensure clean start
                 beepHandler.post(beepRunnable);
-                Log.w(TAG, "🔊 Started continuous beeping - will beep while motion detected");
+                Log.w(TAG, "🔊 Started sequential beeping - one beep at a time");
             } else {
-                Log.d(TAG, "🔊 Beeping already active");
+                Log.d(TAG, "🔊 Beeping already active or playing - isBeeping:" + isBeeping + ", playing:" + isCurrentlyPlayingBeep);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error starting beeping", e);
@@ -716,15 +722,18 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         try {
             if (isBeeping) {
                 isBeeping = false;
-                isCurrentlyPlayingBeep = false; // Reset playing state
-                beepHandler.removeCallbacks(beepRunnable);
+                isCurrentlyPlayingBeep = false;
                 
-                // Also stop any current tone that might be playing
+                // Remove ALL pending beep-related callbacks
+                beepHandler.removeCallbacks(beepRunnable);
+                beepHandler.removeCallbacksAndMessages(null); // Remove any nested callbacks too
+                
+                // Stop any currently playing tone immediately
                 if (toneGenerator != null) {
                     toneGenerator.stopTone();
                 }
                 
-                Log.d(TAG, "🔇 Stopped beeping and reset all beep states");
+                Log.d(TAG, "🔇 Stopped beeping - removed all callbacks and stopped current tone");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error stopping beeping", e);
