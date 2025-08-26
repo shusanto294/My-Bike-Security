@@ -806,7 +806,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             Log.w(TAG, "📞 ADMIN NUMBER CHECK:");
             Log.w(TAG, "  📞 Admin number: '" + adminNumber + "'");
             
-            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+            if (adminNumber == null || adminNumber.isEmpty()) {
                 Log.e(TAG, "❌ Phone call BLOCKED - invalid admin number: " + adminNumber);
                 return;
             }

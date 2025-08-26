@@ -510,7 +510,7 @@ public class MainActivity extends Activity {
                 String adminNumber = stateManager.getAdminNumber();
                 android.util.Log.w("MainActivity", "📞 TRIGGERING CALL to: " + adminNumber);
                 
-                if (adminNumber != null && !adminNumber.isEmpty() && !adminNumber.equals("+11111111111")) {
+                if (adminNumber != null && !adminNumber.isEmpty()) {
                     // Step 1: Wake up the screen first
                     wakeUpScreen();
                     

@@ -37,7 +37,7 @@ public class AppStateManager {
             setStatus("locked");
         }
         if (!prefs.contains(KEY_ADMIN_NUMBER)) {
-            setAdminNumber("+11111111111");
+            setAdminNumber("01743395086");
         }
         if (!prefs.contains(KEY_CALL)) {
             setCall(true);
@@ -58,13 +58,13 @@ public class AppStateManager {
     }
     
     public String getAdminNumber() {
-        return prefs.getString(KEY_ADMIN_NUMBER, "+11111111111");
+        return prefs.getString(KEY_ADMIN_NUMBER, "01743395086");
     }
     
     public void setAdminNumber(String number) {
-        String oldNumber = prefs.getString(KEY_ADMIN_NUMBER, "+11111111111");
+        String oldNumber = prefs.getString(KEY_ADMIN_NUMBER, "01743395086");
         boolean success = prefs.edit().putString(KEY_ADMIN_NUMBER, number).commit();
-        String verifyNumber = prefs.getString(KEY_ADMIN_NUMBER, "+11111111111");
+        String verifyNumber = prefs.getString(KEY_ADMIN_NUMBER, "01743395086");
         
         Log.w(TAG, "🔄 ADMIN NUMBER UPDATE:");
         Log.w(TAG, "  📞 Old number: " + oldNumber);

@@ -223,7 +223,7 @@ public class SmsReceiver extends BroadcastReceiver {
             String adminNumber = stateManager.getAdminNumber();
             Log.w(TAG, "📞 TEST CALL - Admin number: " + adminNumber);
             
-            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("01743395086")) {
                 Log.e(TAG, "❌ TEST CALL FAILED - No valid admin number");
                 return;
             }
@@ -250,7 +250,7 @@ public class SmsReceiver extends BroadcastReceiver {
             String adminNumber = stateManager.getAdminNumber();
             Log.w(TAG, "📞 TEST DELAYED CALL - Admin number: " + adminNumber);
             
-            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("01743395086")) {
                 Log.e(TAG, "❌ TEST DELAYED CALL FAILED - No valid admin number");
                 return;
             }
@@ -327,7 +327,7 @@ public class SmsReceiver extends BroadcastReceiver {
             String adminNumber = stateManager.getAdminNumber();
             Log.w(TAG, "⏱️ SINGLE TIMER - Admin number: " + adminNumber);
             
-            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("01743395086")) {
                 Log.e(TAG, "❌ SINGLE TIMER TEST FAILED - No valid admin number");
                 return;
             }
@@ -357,7 +357,7 @@ public class SmsReceiver extends BroadcastReceiver {
             String adminNumber = stateManager.getAdminNumber();
             Log.w(TAG, "⏰ TEST READY - Admin number: " + adminNumber);
             
-            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("+11111111111")) {
+            if (adminNumber == null || adminNumber.isEmpty() || adminNumber.equals("01743395086")) {
                 Log.e(TAG, "❌ TEST READY FAILED - No valid admin number");
                 return;
             }
