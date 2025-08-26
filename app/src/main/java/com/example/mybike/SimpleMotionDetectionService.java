@@ -15,6 +15,7 @@ import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.media.MediaPlayer;
+import android.media.AudioFocusRequest;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -52,6 +53,8 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private Runnable beepRunnable;
     private boolean isBeeping = false;
     private boolean isCurrentlyPlayingBeep = false;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
     
     private static final float MOTION_THRESHOLD = 0.3f;
     private static final long MOTION_ALERT_COOLDOWN = 30000; // 30 seconds between motion alerts
@@ -81,6 +84,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         Log.d(TAG, "Service created");
         
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         stateManager = AppStateManager.getInstance(this);
         createNotificationChannel();
         
@@ -142,7 +146,10 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         String text;
         
         if (motionDetected) {
-            if (isCallDelayActive && motionStartTime > 0) {
+            if ("unlocked".equals(status)) {
+                // Motion detected but device is unlocked - no alarm/call
+                text = "🔓 Motion detected - No alarm (unlocked)";
+            } else if (isCallDelayActive && motionStartTime > 0) {
                 long timeRemaining = CALL_DELAY - (System.currentTimeMillis() - motionStartTime);
                 if (timeRemaining > 0) {
                     text = "🚨 Motion! Calling in " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
@@ -285,6 +292,8 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 @Override
                 public void run() {
                     checkSensorHealth();
+                    // Also sync with state manager during health checks (catches SMS command changes)
+                    syncServiceStateWithManager();
                     // Schedule next health check
                     sensorHealthHandler.postDelayed(this, SENSOR_REREGISTER_INTERVAL);
                 }
@@ -475,15 +484,43 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private void syncServiceStateWithManager() {
         try {
             if (stateManager != null) {
+                // Check if device was unlocked - if so, stop all alarm activity
+                boolean isLocked = stateManager.isLocked();
+                if (!isLocked && (isCallDelayActive || isBeeping)) {
+                    Log.w(TAG, "🔓 DEVICE UNLOCKED - stopping all alarm activity immediately");
+                    isCallDelayActive = false;
+                    motionStartTime = 0;
+                    stopBeeping(); // Stop any active beeping
+                    cancelScheduledCall(); // Cancel any pending calls  
+                    stopUIUpdates(); // Stop UI countdown updates
+                    updateNotificationAndUI(); // Update display
+                    return; // Exit early after cleanup
+                }
+                
                 // Sync local variables with state manager (single source of truth)
                 boolean stateManagerActive = stateManager.isCallDelayActive();
+                boolean stateManagerReady = stateManager.isCallReady();
+                long stateManagerMotionTime = stateManager.getMotionStartTime();
+                
                 if (isCallDelayActive != stateManagerActive) {
-                    Log.d(TAG, "🔄 Syncing service state: isCallDelayActive " + isCallDelayActive + " -> " + stateManagerActive);
+                    Log.w(TAG, "🔄 Syncing service state: isCallDelayActive " + isCallDelayActive + " -> " + stateManagerActive);
                     isCallDelayActive = stateManagerActive;
+                    
                     if (!stateManagerActive) {
-                        // Timer was reset by MainActivity - reset local state too
+                        // Timer was reset (by SMS command or MainActivity) - clean up everything
+                        Log.w(TAG, "🔄 Timer reset detected - stopping all alarm activity");
                         motionStartTime = 0;
+                        stopBeeping(); // Stop any active beeping
+                        cancelScheduledCall(); // Cancel any pending calls
+                        stopUIUpdates(); // Stop UI countdown updates
+                        updateNotificationAndUI(); // Update display to show "Never"
                     }
+                }
+                
+                // Also sync motion start time in case it was reset
+                if (motionStartTime != stateManagerMotionTime) {
+                    Log.d(TAG, "🔄 Syncing motion start time: " + motionStartTime + " -> " + stateManagerMotionTime);
+                    motionStartTime = stateManagerMotionTime;
                 }
             }
         } catch (Exception e) {
@@ -661,13 +698,21 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                     
                     if (detected) {
                         // Motion detected - check if we should call immediately or start timer
-                        Log.w(TAG, "🚨 MOTION DETECTED! Checking call state...");
+                        Log.w(TAG, "🚨 MOTION DETECTED! Checking device status and call state...");
+                        
+                        // First check if device is locked - ignore motion if unlocked
+                        boolean isLocked = (stateManager != null) ? stateManager.isLocked() : false;
+                        if (!isLocked) {
+                            Log.w(TAG, "🔓 MOTION IGNORED - Device is unlocked (status: " + 
+                                 (stateManager != null ? stateManager.getStatus() : "unknown") + ")");
+                            return; // Exit early, don't process motion when unlocked
+                        }
                         
                         // Check if we're in Ready state (timer expired, waiting for motion)
                         boolean isReady = (stateManager != null) ? stateManager.isCallReady() : false;
                         boolean isTimerActive = (stateManager != null) ? stateManager.isCallDelayActive() : false;
                         
-                        Log.w(TAG, "🚨 Call state check: Ready=" + isReady + ", TimerActive=" + isTimerActive);
+                        Log.w(TAG, "🚨 Call state check: Locked=" + isLocked + ", Ready=" + isReady + ", TimerActive=" + isTimerActive);
                         
                         if (isReady && !isTimerActive) {
                             // We're in Ready state - trigger call immediately
@@ -715,13 +760,16 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         try {
             if (stateManager == null) return;
             
-            // Beep if alarm is enabled (remove locked requirement for better reliability)
-            if (!stateManager.getAlarm()) {
-                Log.d(TAG, "Beeping skipped - alarm disabled");
+            // Only beep if device is locked and alarm is enabled
+            if (!stateManager.isLocked() || !stateManager.getAlarm()) {
+                Log.d(TAG, "Beeping skipped - device unlocked or alarm disabled (status: " + stateManager.getStatus() + ", alarm: " + stateManager.getAlarm() + ")");
                 return;
             }
             
             if (!isBeeping && !isCurrentlyPlayingBeep) {
+                // Request audio focus for alarm playback
+                requestAudioFocusForAlarm();
+                
                 isBeeping = true;
                 isCurrentlyPlayingBeep = false; // Ensure clean start
                 beepHandler.post(beepRunnable);
@@ -731,6 +779,34 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             }
         } catch (Exception e) {
             Log.e(TAG, "Error starting beeping", e);
+        }
+    }
+    
+    private void requestAudioFocusForAlarm() {
+        try {
+            if (audioManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // For Android O and above
+                    AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build();
+                    
+                    audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                            .setAudioAttributes(audioAttributes)
+                            .setAcceptsDelayedFocusGain(true)
+                            .build();
+                    
+                    int result = audioManager.requestAudioFocus(audioFocusRequest);
+                    Log.d(TAG, "🔊 Audio focus requested (Android O+) - result: " + result);
+                } else {
+                    // For older versions
+                    int result = audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+                    Log.d(TAG, "🔊 Audio focus requested (legacy) - result: " + result);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error requesting audio focus", e);
         }
     }
     
@@ -750,10 +826,34 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                     mediaPlayer.seekTo(0); // Reset to beginning for next time
                 }
                 
+                // Release audio focus to allow normal call ringtone
+                releaseAudioFocusForCall();
+                
                 Log.d(TAG, "🔇 Stopped police sound - removed all callbacks and stopped current audio");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error stopping beeping", e);
+        }
+    }
+    
+    private void releaseAudioFocusForCall() {
+        try {
+            if (audioManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // For Android O and above, abandon audio focus request
+                    if (audioFocusRequest != null) {
+                        audioManager.abandonAudioFocusRequest(audioFocusRequest);
+                        audioFocusRequest = null;
+                        Log.d(TAG, "🔊 Audio focus released (Android O+) - call ringtone should play normally");
+                    }
+                } else {
+                    // For older versions
+                    int result = audioManager.abandonAudioFocus(null);
+                    Log.d(TAG, "🔊 Audio focus released (legacy) - result: " + result + " - call ringtone should play normally");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing audio focus", e);
         }
     }
     
@@ -814,16 +914,20 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             Log.w(TAG, "✅ Valid admin number found");
             Log.w(TAG, "📞 ATTEMPTING TO CALL: " + adminNumber);
             
-            // Step 1: Wake up the screen first
+            // Step 1: Stop all audio and release audio focus BEFORE calling
+            Log.w(TAG, "🔊 PREPARING AUDIO for call - stopping beeping and releasing audio focus");
+            stopBeeping(); // This will also release audio focus
+            
+            // Step 2: Wake up the screen
             wakeUpScreen();
             
-            // Step 2: Wait a moment for screen to wake up, then initiate call
+            // Step 3: Wait a moment for screen to wake up and audio to be released, then initiate call
             Handler callHandler = new Handler(Looper.getMainLooper());
             callHandler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        Log.d(TAG, "Initiating phone call after screen wake-up");
+                        Log.w(TAG, "🔊 Audio preparation complete - initiating phone call after screen wake-up");
                         
                         Intent callIntent = new Intent(Intent.ACTION_CALL);
                         callIntent.setData(Uri.parse("tel:" + adminNumber));
@@ -863,7 +967,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                         releaseScreenWakeLock();
                     }
                 }
-            }, 1000); // Wait 1 second for screen to wake up
+            }, 1500); // Wait 1.5 seconds for screen wake-up and audio cleanup
             
         } catch (Exception e) {
             Log.e(TAG, "Error making phone call", e);
@@ -918,8 +1022,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 sensorManager.unregisterListener(this);
             }
             
-            // Stop beeping
+            // Stop beeping and release audio focus
             stopBeeping();
+            releaseAudioFocusForCall(); // Ensure audio focus is fully released
             
             // Stop sensor health monitoring
             if (sensorHealthHandler != null && sensorHealthRunnable != null) {

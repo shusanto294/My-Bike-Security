@@ -85,12 +85,16 @@ public class SmsReceiver extends BroadcastReceiver {
                 switch (message_lower) {
                     case "lock":
                         stateManager.setStatus("locked");
-                        response = "Status changed to locked";
+                        stateManager.resetCallTimer(); // Reset call timer to default state
+                        response = "Status changed to locked - timer reset";
+                        Log.w(TAG, "🔒 LOCK command: Status set to locked, call timer reset");
                         break;
                         
                     case "unlock":
                         stateManager.setStatus("unlocked");
-                        response = "Status changed to unlocked";
+                        stateManager.resetCallTimer(); // Reset call timer to default state
+                        response = "Status changed to unlocked - timer reset";
+                        Log.w(TAG, "🔓 UNLOCK command: Status set to unlocked, call timer reset");
                         break;
                         
                     case "call true":

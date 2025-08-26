@@ -131,6 +131,13 @@ public class AppStateManager {
         Log.d(TAG, "Call ready status changed to: " + ready);
     }
     
+    public void resetCallTimer() {
+        setCallDelayActive(false);
+        setCallReady(false);
+        setMotionStartTime(0);
+        Log.d(TAG, "Call timer reset to default state - all timers cleared");
+    }
+    
     public String getAllStatesString() {
         return String.format("Status: %s\nAdmin: %s\nCall: %s\nAlarm: %s",
             getStatus(), getAdminNumber(), getCall(), getAlarm());
