@@ -56,6 +56,12 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     
+    // Alarm cycle management - NEW
+    private boolean isAlarmCycleActive = false;
+    private Handler alarmCycleHandler;
+    private Runnable alarmCycleRunnable;
+    private static final long ALARM_CYCLE_DURATION = 5000; // 5 seconds
+    
     private static final float MOTION_THRESHOLD = 0.3f;
     private static final long MOTION_ALERT_COOLDOWN = 30000; // 30 seconds between motion alerts
     private static final long CALL_COOLDOWN = 60000; // 60 seconds between calls
@@ -97,6 +103,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         initPowerManager();
         initSensor();
         initBeepSystem();
+        initAlarmCycleSystem();
         setupSensorHealthMonitoring();
         setupUIUpdates();
     }
@@ -444,8 +451,8 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                                 motionStartTime = 0;
                                 stateManager.setMotionStartTime(0);
                                 
-                                // Stop beeping when timer expires
-                                stopBeeping();
+                                // Stop alarm cycle system when timer expires
+                                stopAlarmCycle();
                                 
                                 // Update UI to show "Ready" state
                                 updateNotificationAndUI();
@@ -486,10 +493,11 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             if (stateManager != null) {
                 // Check if device was unlocked - if so, stop all alarm activity
                 boolean isLocked = stateManager.isLocked();
-                if (!isLocked && (isCallDelayActive || isBeeping)) {
+                if (!isLocked && (isCallDelayActive || isBeeping || isAlarmCycleActive)) {
                     Log.w(TAG, "🔓 DEVICE UNLOCKED - stopping all alarm activity immediately");
                     isCallDelayActive = false;
                     motionStartTime = 0;
+                    stopAlarmCycle(); // Stop alarm cycle system
                     stopBeeping(); // Stop any active beeping
                     cancelScheduledCall(); // Cancel any pending calls  
                     stopUIUpdates(); // Stop UI countdown updates
@@ -510,6 +518,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                         // Timer was reset (by SMS command or MainActivity) - clean up everything
                         Log.w(TAG, "🔄 Timer reset detected - stopping all alarm activity");
                         motionStartTime = 0;
+                        stopAlarmCycle(); // Stop alarm cycle system
                         stopBeeping(); // Stop any active beeping
                         cancelScheduledCall(); // Cancel any pending calls
                         stopUIUpdates(); // Stop UI countdown updates
@@ -666,6 +675,78 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         }
     }
     
+    private void initAlarmCycleSystem() {
+        try {
+            alarmCycleHandler = new Handler(Looper.getMainLooper());
+            alarmCycleRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Log.d(TAG, "🔔 ALARM CYCLE COMPLETED - checking motion status");
+                        
+                        // Check if motion is still detected after 5-second cycle
+                        if (motionDetected) {
+                            Log.d(TAG, "🔔 Motion still active - starting new 5-second alarm cycle");
+                            startAlarmCycle(); // Start another 5-second cycle
+                        } else {
+                            Log.d(TAG, "🔇 Motion stopped - ending alarm cycles");
+                            stopAlarmCycle(); // Motion stopped, don't repeat
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in alarm cycle completion", e);
+                        stopAlarmCycle();
+                    }
+                }
+            };
+            
+            Log.d(TAG, "Alarm cycle system initialized");
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing alarm cycle system", e);
+        }
+    }
+    
+    private void startAlarmCycle() {
+        try {
+            if (!isAlarmCycleActive && stateManager != null && stateManager.isLocked() && stateManager.getAlarm()) {
+                isAlarmCycleActive = true;
+                Log.w(TAG, "🔔 STARTING 5-SECOND ALARM CYCLE");
+                
+                // Start the beeping immediately
+                startBeeping();
+                
+                // Schedule the cycle completion check after 5 seconds
+                if (alarmCycleHandler != null && alarmCycleRunnable != null) {
+                    alarmCycleHandler.postDelayed(alarmCycleRunnable, ALARM_CYCLE_DURATION);
+                    Log.d(TAG, "🔔 Alarm cycle scheduled for " + (ALARM_CYCLE_DURATION / 1000) + " seconds");
+                }
+            } else {
+                Log.d(TAG, "🔔 Alarm cycle not started - already active or conditions not met");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting alarm cycle", e);
+            stopAlarmCycle();
+        }
+    }
+    
+    private void stopAlarmCycle() {
+        try {
+            if (isAlarmCycleActive) {
+                isAlarmCycleActive = false;
+                Log.d(TAG, "🔇 STOPPING ALARM CYCLE");
+                
+                // Cancel any pending cycle completion
+                if (alarmCycleHandler != null && alarmCycleRunnable != null) {
+                    alarmCycleHandler.removeCallbacks(alarmCycleRunnable);
+                }
+                
+                // Stop the current beeping
+                stopBeeping();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping alarm cycle", e);
+        }
+    }
+    
     @Override
     public void onSensorChanged(SensorEvent event) {
         try {
@@ -726,20 +807,24 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                             wakeUpScreen();
                             Log.w(TAG, "🚨 Step 2: Sending SMS alert");
                             sendMotionAlert();
-                            Log.w(TAG, "🚨 Step 3: Starting beeping");
-                            startBeeping();
+                            Log.w(TAG, "🚨 Step 3: Starting 5-second alarm cycle");
+                            startAlarmCycle();
                             Log.w(TAG, "🚨 Step 4: Starting 30-second call timer");
                             startCallTimer();
                             Log.w(TAG, "🚨 All alarm actions initiated with screen awake");
                         } else {
-                            // Timer already active - restart beeping if motion detected again
-                            Log.w(TAG, "🚨 Motion detected during active timer - restarting beeping");
-                            startBeeping();
+                            // Timer already active - start new alarm cycle if not already running
+                            if (!isAlarmCycleActive) {
+                                Log.w(TAG, "🚨 Motion detected during active timer - starting new alarm cycle");
+                                startAlarmCycle();
+                            } else {
+                                Log.d(TAG, "🚨 Motion continues - alarm cycle already active");
+                            }
                         }
                     } else {
-                        // Motion stopped - stop beeping but KEEP the call timer running
-                        Log.d(TAG, "Motion stopped - stopping beeping but keeping call timer");
-                        stopBeeping();
+                        // Motion stopped - DON'T stop alarm immediately, let 5-second cycle complete
+                        Log.d(TAG, "Motion stopped - alarm cycle will check and stop after current 5-second cycle completes");
+                        // DON'T stop beeping here - let the alarm cycle system handle it
                         // DON'T cancel the delayed call - let it complete
                     }
                     
@@ -1022,7 +1107,8 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 sensorManager.unregisterListener(this);
             }
             
-            // Stop beeping and release audio focus
+            // Stop alarm cycle system and beeping
+            stopAlarmCycle();
             stopBeeping();
             releaseAudioFocusForCall(); // Ensure audio focus is fully released
             

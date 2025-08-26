@@ -6,7 +6,9 @@
       "Bash(./gradlew:*)",
       "Read(/C:\\Users\\shusa/**)",
       "Read(/C:\\Users\\shusa\\Downloads/**)",
-      "Bash(copy:*)"
+      "Bash(copy:*)",
+      "Bash(java:*)",
+      "Bash(cmd /c:*)"
     ],
     "deny": [],
     "ask": [],
