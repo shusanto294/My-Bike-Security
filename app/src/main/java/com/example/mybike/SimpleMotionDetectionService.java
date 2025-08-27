@@ -159,9 +159,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             } else if (isCallDelayActive && motionStartTime > 0) {
                 long timeRemaining = CALL_DELAY - (System.currentTimeMillis() - motionStartTime);
                 if (timeRemaining > 0) {
-                    text = "🚨 Motion! Calling in " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
+                    text = "🚨 Motion! Cooldown " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
                 } else {
-                    text = "🚨 Calling now! (" + status + ")";
+                    text = "🚨 Motion! Cooldown expired (" + status + ")";
                 }
             } else {
                 text = "🚨 Motion Detected! (" + status + ")";
@@ -171,9 +171,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             if (isCallDelayActive && motionStartTime > 0) {
                 long timeRemaining = CALL_DELAY - (System.currentTimeMillis() - motionStartTime);
                 if (timeRemaining > 0) {
-                    text = "⏱️ Calling in " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
+                    text = "⏱️ Cooldown " + Math.max(1, (timeRemaining / 1000)) + "s (" + status + ")";
                 } else {
-                    text = "📞 Ready to call (" + status + ")";
+                    text = "📞 Cooldown expired (" + status + ")";
                 }
             } else if (stateManager != null && stateManager.isCallReady()) {
                 // In Ready state - waiting for motion to trigger call
@@ -391,7 +391,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             boolean isCurrentlyActive = (stateManager != null) ? stateManager.isCallDelayActive() : false;
             
             if (!isCurrentlyActive) {
-                // First time motion detected - start the timer
+                // Start the 30-second cooldown timer after the immediate call
                 motionStartTime = System.currentTimeMillis();
                 
                 // Update state manager with timer info - this is the SINGLE source of truth
@@ -402,27 +402,27 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                     isCallDelayActive = true;
                 }
                 
-                Log.w(TAG, "📞 CALL TIMER STARTED - Single timer system active");
+                Log.w(TAG, "📞 COOLDOWN TIMER STARTED - 30 seconds until next call allowed");
                 
                 // Start UI updates and initial notification
                 startUIUpdates();
                 updateNotificationAndUI();
                 
-                // Schedule the actual call after 30 seconds - THIS IS THE KEY FIX
-                scheduleDelayedCall();
+                // Schedule the cooldown expiry after 30 seconds
+                scheduleCooldownExpiry();
             } else {
-                Log.d(TAG, "📞 MOTION CONTINUES - Timer already running");
+                Log.d(TAG, "📞 COOLDOWN ALREADY ACTIVE - Timer already running");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error starting call timer", e);
         }
     }
     
-    private void scheduleDelayedCall() {
+    private void scheduleCooldownExpiry() {
         try {
-            Log.w(TAG, "📞 SCHEDULING DELAYED CALL - Will execute in 30 seconds");
+            Log.w(TAG, "📞 SCHEDULING COOLDOWN EXPIRY - Will expire in 30 seconds");
             
-            // Cancel any existing scheduled call first
+            // Cancel any existing scheduled cooldown first
             cancelScheduledCall();
             
             callSchedulerHandler = new Handler(Looper.getMainLooper());
@@ -430,50 +430,50 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                 @Override
                 public void run() {
                     try {
-                        Log.w(TAG, "📞 DELAYED CALL TIMER EXPIRED - Checking conditions");
+                        Log.w(TAG, "📞 COOLDOWN TIMER EXPIRED - Calls now allowed again");
                         
-                        // Check if we should still make the call
+                        // Check if cooldown should expire
                         if (stateManager != null && isCallDelayActive && motionStartTime > 0) {
                             long currentTime = System.currentTimeMillis();
                             long elapsed = currentTime - motionStartTime;
                             
-                            Log.w(TAG, "📞 TIMER CHECK: elapsed=" + elapsed + "ms, threshold=30000ms");
+                            Log.w(TAG, "📞 COOLDOWN CHECK: elapsed=" + elapsed + "ms, threshold=30000ms");
                             
                             if (elapsed >= CALL_DELAY) {
-                                Log.w(TAG, "✅ TIMER EXPIRED - Setting to READY state, waiting for motion");
+                                Log.w(TAG, "✅ COOLDOWN EXPIRED - Calls now allowed, waiting for motion");
                                 
-                                // Update state to Ready (don't call immediately)
+                                // Clear cooldown state - calls are now allowed again
                                 stateManager.setCallDelayActive(false);
-                                stateManager.setCallReady(true);
+                                stateManager.setCallReady(false); // Reset to default state
                                 
                                 // Reset local timer states 
                                 isCallDelayActive = false;
                                 motionStartTime = 0;
                                 stateManager.setMotionStartTime(0);
                                 
-                                // Stop alarm cycle system when timer expires
+                                // Stop alarm cycle system when cooldown expires
                                 stopAlarmCycle();
                                 
-                                // Update UI to show "Ready" state
+                                // Update UI to show normal monitoring state
                                 updateNotificationAndUI();
                                 
-                                Log.w(TAG, "🟡 Service in READY state - stopped beeping, waiting for motion to trigger call");
+                                Log.w(TAG, "🟢 Cooldown expired - next motion will trigger immediate call");
                             } else {
-                                Log.w(TAG, "⏰ Timer not yet expired, waiting...");
+                                Log.w(TAG, "⏰ Cooldown not yet expired, waiting...");
                             }
                         } else {
-                            Log.w(TAG, "❌ Call cancelled or timer reset");
+                            Log.w(TAG, "❌ Cooldown cancelled or timer reset");
                         }
                     } catch (Exception e) {
-                        Log.e(TAG, "Error in delayed call execution", e);
+                        Log.e(TAG, "Error in cooldown expiry execution", e);
                     }
                 }
             };
             
             callSchedulerHandler.postDelayed(scheduledCallRunnable, CALL_DELAY); // 30 seconds
-            Log.w(TAG, "✅ Delayed call scheduled successfully");
+            Log.w(TAG, "✅ Cooldown expiry scheduled successfully");
         } catch (Exception e) {
-            Log.e(TAG, "Error scheduling delayed call", e);
+            Log.e(TAG, "Error scheduling cooldown expiry", e);
         }
     }
     
@@ -801,17 +801,19 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                             wakeUpScreen();
                             makePhoneCall();
                         } else if (!isTimerActive) {
-                            // First motion detection - start the alarm sequence
-                            Log.w(TAG, "🚨 Starting new alarm sequence...");
+                            // First motion detection - make call immediately
+                            Log.w(TAG, "🚨 FIRST MOTION DETECTION - CALLING IMMEDIATELY!");
                             Log.w(TAG, "🚨 Step 1: WAKING UP SCREEN immediately");
                             wakeUpScreen();
                             Log.w(TAG, "🚨 Step 2: Sending SMS alert");
                             sendMotionAlert();
                             Log.w(TAG, "🚨 Step 3: Starting 5-second alarm cycle");
                             startAlarmCycle();
-                            Log.w(TAG, "🚨 Step 4: Starting 30-second call timer");
+                            Log.w(TAG, "🚨 Step 4: Making immediate call");
+                            makePhoneCall();
+                            Log.w(TAG, "🚨 Step 5: Starting 30-second cooldown timer");
                             startCallTimer();
-                            Log.w(TAG, "🚨 All alarm actions initiated with screen awake");
+                            Log.w(TAG, "🚨 First call made immediately, next call only after 30s timer");
                         } else {
                             // Timer already active - start new alarm cycle if not already running
                             if (!isAlarmCycleActive) {

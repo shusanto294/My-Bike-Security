@@ -43,7 +43,7 @@ public class AppStateManager {
             setCall(true);
         }
         if (!prefs.contains(KEY_ALARM)) {
-            setAlarm(true);
+            setAlarm(false);
         }
         Log.d(TAG, "Default states initialized");
     }
