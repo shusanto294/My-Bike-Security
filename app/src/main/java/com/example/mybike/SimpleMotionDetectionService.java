@@ -25,6 +25,7 @@ import android.os.PowerManager;
 import android.app.KeyguardManager;
 import android.view.WindowManager;
 import android.telephony.SmsManager;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
@@ -64,7 +65,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
     
     private static final float MOTION_THRESHOLD = 0.3f;
     private static final long MOTION_ALERT_COOLDOWN = 30000; // 30 seconds between motion alerts
-    private static final long CALL_COOLDOWN = 60000; // 60 seconds between calls
+    private static final long CALL_COOLDOWN = 30000; // 30 seconds between calls (same as CALL_DELAY)
     private static final int BEEP_INTERVAL = 800; // 800ms between beep starts (500ms beep + 300ms silence)
     private static final long SENSOR_REREGISTER_INTERVAL = 30000; // Re-register sensor every 30 seconds
     private static final long CALL_DELAY = 30000; // 30 seconds delay before calling
@@ -94,11 +95,11 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         stateManager = AppStateManager.getInstance(this);
         createNotificationChannel();
         
-        // Clear any leftover delay state on service start
+        // Clear any leftover delay state on service start and ensure ready state
         if (stateManager != null) {
             stateManager.setCallDelayActive(false);
             stateManager.setMotionStartTime(0);
-            stateManager.setCallReady(false);
+            stateManager.setCallReady(true); // Ensure service starts in ready state
         }
         initPowerManager();
         initSensor();
@@ -156,6 +157,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             if ("unlocked".equals(status)) {
                 // Motion detected but device is unlocked - no alarm/call
                 text = "🔓 Motion detected - No alarm (unlocked)";
+            } else if (isCallInProgress()) {
+                // Motion detected but call is already active
+                text = "🚨 Motion! Call already active (" + status + ")";
             } else if (isCallDelayActive && motionStartTime > 0) {
                 long timeRemaining = CALL_DELAY - (System.currentTimeMillis() - motionStartTime);
                 if (timeRemaining > 0) {
@@ -440,11 +444,11 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                             Log.w(TAG, "📞 COOLDOWN CHECK: elapsed=" + elapsed + "ms, threshold=30000ms");
                             
                             if (elapsed >= CALL_DELAY) {
-                                Log.w(TAG, "✅ COOLDOWN EXPIRED - Calls now allowed, waiting for motion");
+                                Log.w(TAG, "✅ COOLDOWN EXPIRED - Setting to READY state");
                                 
-                                // Clear cooldown state - calls are now allowed again
+                                // Set to Ready state - next motion will trigger immediate call
                                 stateManager.setCallDelayActive(false);
-                                stateManager.setCallReady(false); // Reset to default state
+                                stateManager.setCallReady(true); // Set to READY state
                                 
                                 // Reset local timer states 
                                 isCallDelayActive = false;
@@ -454,10 +458,10 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                                 // Stop alarm cycle system when cooldown expires
                                 stopAlarmCycle();
                                 
-                                // Update UI to show normal monitoring state
+                                // Update UI to show ready state
                                 updateNotificationAndUI();
                                 
-                                Log.w(TAG, "🟢 Cooldown expired - next motion will trigger immediate call");
+                                Log.w(TAG, "🟡 Service in READY state - next motion will trigger immediate call");
                             } else {
                                 Log.w(TAG, "⏰ Cooldown not yet expired, waiting...");
                             }
@@ -789,20 +793,34 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                             return; // Exit early, don't process motion when unlocked
                         }
                         
-                        // Check if we're in Ready state (timer expired, waiting for motion)
-                        boolean isReady = (stateManager != null) ? stateManager.isCallReady() : false;
+                        // Add detailed state logging
+                        if (stateManager != null) {
+                            Log.w(TAG, "🔍 DETAILED STATE CHECK:");
+                            Log.w(TAG, "  🔒 Device locked: " + stateManager.isLocked());
+                            Log.w(TAG, "  📞 Call enabled: " + stateManager.getCall());
+                            Log.w(TAG, "  🚨 Alarm enabled: " + stateManager.getAlarm());
+                            Log.w(TAG, "  🟡 Call ready: " + stateManager.isCallReady());
+                            Log.w(TAG, "  ⏱️ Call delay active: " + stateManager.isCallDelayActive());
+                            Log.w(TAG, "  📱 Status: " + stateManager.getStatus());
+                            Log.w(TAG, "  📞 Admin number: " + stateManager.getAdminNumber());
+                        }
+                        
+                        // Check if cooldown timer is active and if there's already a call in progress
                         boolean isTimerActive = (stateManager != null) ? stateManager.isCallDelayActive() : false;
+                        boolean isCallActive = isCallInProgress();
                         
-                        Log.w(TAG, "🚨 Call state check: Locked=" + isLocked + ", Ready=" + isReady + ", TimerActive=" + isTimerActive);
+                        Log.w(TAG, "🚨 DECISION FLOW: Locked=" + isLocked + ", TimerActive=" + isTimerActive + ", CallInProgress=" + isCallActive);
                         
-                        if (isReady && !isTimerActive) {
-                            // We're in Ready state - trigger call immediately
-                            Log.w(TAG, "🚨 READY STATE + MOTION = CALLING IMMEDIATELY!");
-                            wakeUpScreen();
-                            makePhoneCall();
+                        if (isCallActive) {
+                            Log.w(TAG, "🚨 MOTION IGNORED - Call already in progress, not making duplicate call");
+                            // Still start alarm cycle to alert about motion, but don't call
+                            if (!isAlarmCycleActive) {
+                                Log.w(TAG, "🚨 Starting alarm cycle for motion during active call");
+                                startAlarmCycle();
+                            }
                         } else if (!isTimerActive) {
-                            // First motion detection - make call immediately
-                            Log.w(TAG, "🚨 FIRST MOTION DETECTION - CALLING IMMEDIATELY!");
+                            // No active cooldown - make call immediately and start new cooldown
+                            Log.w(TAG, "🚨 MOTION DETECTED - CALLING IMMEDIATELY!");
                             Log.w(TAG, "🚨 Step 1: WAKING UP SCREEN immediately");
                             wakeUpScreen();
                             Log.w(TAG, "🚨 Step 2: Sending SMS alert");
@@ -810,10 +828,12 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
                             Log.w(TAG, "🚨 Step 3: Starting 5-second alarm cycle");
                             startAlarmCycle();
                             Log.w(TAG, "🚨 Step 4: Making immediate call");
+                            Log.w(TAG, "🚨 CALLING makePhoneCall() now...");
                             makePhoneCall();
+                            Log.w(TAG, "🚨 makePhoneCall() completed");
                             Log.w(TAG, "🚨 Step 5: Starting 30-second cooldown timer");
                             startCallTimer();
-                            Log.w(TAG, "🚨 First call made immediately, next call only after 30s timer");
+                            Log.w(TAG, "🚨 Call made immediately, starting cooldown");
                         } else {
                             // Timer already active - start new alarm cycle if not already running
                             if (!isAlarmCycleActive) {
@@ -944,6 +964,24 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         }
     }
     
+    private boolean isCallInProgress() {
+        try {
+            TelephonyManager telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+            if (telephonyManager != null) {
+                int callState = telephonyManager.getCallState();
+                boolean callActive = (callState == TelephonyManager.CALL_STATE_RINGING || 
+                                    callState == TelephonyManager.CALL_STATE_OFFHOOK);
+                
+                Log.d(TAG, "📞 Call state check: " + callState + " (IDLE=0, RINGING=1, OFFHOOK=2), Call active: " + callActive);
+                return callActive;
+            }
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking call state", e);
+            return false; // Assume no call if error
+        }
+    }
+    
     private void makePhoneCall() {
         try {
             Log.w(TAG, "📞 MAKE PHONE CALL - Starting call attempt");
@@ -955,15 +993,13 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             
             // Check all conditions with detailed logging
             boolean isLocked = stateManager.isLocked();
-            boolean alarmEnabled = stateManager.getAlarm();
             boolean callEnabled = stateManager.getCall();
             
             Log.w(TAG, "📞 CALL CONDITIONS CHECK:");
             Log.w(TAG, "  🔒 Device locked: " + isLocked + " (status: " + stateManager.getStatus() + ")");
-            Log.w(TAG, "  🚨 Alarm enabled: " + alarmEnabled);
             Log.w(TAG, "  📲 Call enabled: " + callEnabled);
             
-            if (!isLocked || !alarmEnabled || !callEnabled) {
+            if (!isLocked || !callEnabled) {
                 Log.e(TAG, "❌ Phone call BLOCKED - conditions not met!");
                 return;
             }
@@ -984,6 +1020,7 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
             if (timeSinceLastCall < CALL_COOLDOWN) {
                 Log.e(TAG, "❌ Phone call BLOCKED - cooldown active (" + 
                       ((CALL_COOLDOWN - timeSinceLastCall) / 1000) + "s remaining)");
+                Log.e(TAG, "❌ COOLDOWN DETAILS: last call was " + (timeSinceLastCall/1000) + "s ago, need " + (CALL_COOLDOWN/1000) + "s");
                 return;
             }
             
@@ -1066,9 +1103,9 @@ public class SimpleMotionDetectionService extends Service implements SensorEvent
         try {
             if (stateManager == null) return;
             
-            // Only send alerts if device is locked and alarm is enabled
-            if (!stateManager.isLocked() || !stateManager.getAlarm()) {
-                Log.d(TAG, "Motion alert skipped - device unlocked or alarm disabled");
+            // Only send alerts if device is locked
+            if (!stateManager.isLocked()) {
+                Log.d(TAG, "Motion alert skipped - device unlocked");
                 return;
             }
             

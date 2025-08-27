@@ -43,9 +43,12 @@ public class AppStateManager {
             setCall(true);
         }
         if (!prefs.contains(KEY_ALARM)) {
-            setAlarm(false);
+            setAlarm(true);
         }
-        Log.d(TAG, "Default states initialized");
+        if (!prefs.contains(KEY_IS_CALL_READY)) {
+            setCallReady(true); // Default to ready state
+        }
+        Log.d(TAG, "Default states initialized - ready state set to true by default");
     }
     
     public String getStatus() {
